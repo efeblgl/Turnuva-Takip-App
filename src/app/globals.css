@@ -1,26 +1,183 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ---------------------------------------------------------------------------
+ * Yığılca Futbol Turnuvası - Tasarım Sistemi
+ * Sade, kurumsal, sportif; açık zemin, yüksek okunabilirlik.
+ * ------------------------------------------------------------------------- */
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-brand-50: #f0fdf4;
+  --color-brand-100: #dcfce7;
+  --color-brand-200: #bbf7d0;
+  --color-brand-600: #16a34a;
+  --color-brand-700: #15803d;
+  --color-brand-800: #166534;
+  --color-brand-900: #14532d;
+
+  --color-surface: #ffffff;
+  --color-page: #f4f5f7;
+  --color-ink: #111827;
+  --color-muted: #6b7280;
+  --color-line: #e5e7eb;
+
+  --radius-card: 0.875rem; /* 14px */
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-page);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Yatay taşmayı her koşulda engelle */
+html, body {
+  overflow-x: hidden;
+}
+
+/* @utility: bu sınıflar hem doğrudan kullanılabilir hem de başka sınıflarda
+   @apply ile genişletilebilir (Tailwind v4'te @layer components buna izin vermez). */
+@utility btn {
+  @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold
+    transition-[background-color,transform,opacity] duration-100 active:scale-[0.98]
+    disabled:pointer-events-none disabled:opacity-50;
+}
+
+@layer components {
+  .container-page {
+    @apply mx-auto w-full max-w-6xl px-4 sm:px-6;
+  }
+
+  .card {
+    @apply rounded-[14px] border border-line bg-surface p-4 shadow-[0_1px_2px_rgba(16,24,40,0.06)];
+  }
+
+  .card-hover {
+    @apply transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-[0_4px_12px_rgba(16,24,40,0.10)];
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-700 text-white hover:bg-brand-800;
+  }
+
+  .btn-secondary {
+    @apply btn border border-line bg-surface text-ink hover:bg-gray-50;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+
+  .btn-ghost {
+    @apply btn text-ink hover:bg-gray-100;
+  }
+
+  .btn-sm {
+    @apply min-h-9 px-3 text-xs;
+  }
+
+  .input {
+    @apply block w-full min-h-11 rounded-xl border border-line bg-surface px-3 py-2 text-sm text-ink
+      placeholder:text-gray-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-100;
+  }
+
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-ink;
+  }
+
+  .field-error {
+    @apply mt-1 text-xs font-medium text-red-600;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap;
+  }
+
+  .skeleton {
+    @apply animate-pulse rounded-lg bg-gray-200;
+  }
+
+  .section-title {
+    @apply text-lg font-bold tracking-tight text-ink;
+  }
+
+  .table-wrap {
+    @apply overflow-x-auto rounded-[14px] border border-line bg-surface;
+  }
+
+  .th {
+    @apply px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted;
+  }
+
+  .td {
+    @apply px-3 py-2.5 text-sm;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Global yüklenme ekranı (splash)
+ * Sol logo soldan, sağ logo sağdan yumuşakça ortaya yaklaşır; başlık ve
+ * nokta göstergesi hafif gecikmeli belirir. Kapanış kısa bir fade-out'tur.
+ * ------------------------------------------------------------------------- */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-page);
+}
+
+.splash-logo-left  { animation: splash-from-left  0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.splash-logo-right { animation: splash-from-right 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.splash-center     { animation: splash-fade-in    0.6s ease-out 0.2s both; }
+
+.splash--closing {
+  animation: splash-fade-out 0.35s ease-in forwards;
+  pointer-events: none;
+}
+
+.splash-dot { animation: splash-dot 1s ease-in-out infinite; }
+.splash-dot:nth-child(2) { animation-delay: 0.15s; }
+.splash-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes splash-from-left {
+  from { opacity: 0; transform: translateX(-40px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes splash-from-right {
+  from { opacity: 0; transform: translateX(40px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes splash-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes splash-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes splash-dot {
+  0%, 100% { opacity: 0.25; }
+  50%      { opacity: 1; }
+}
+
+/* Erişilebilirlik: kullanıcı azaltılmış hareket istiyorsa animasyonları kapat */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
