@@ -20,7 +20,9 @@ declare global {
     __turnuvaDiag?: {
       start: number;
       events: Array<{ type: string; detail?: unknown; t: number }>;
+      stage: string;
     };
+    __turnuvaMarkStage?: (stage: string) => void;
   }
 }
 
@@ -81,6 +83,9 @@ export function Diagnostics() {
 
     const start = window.__turnuvaDiag?.start ?? performance.timeOrigin;
     logger.info("diagnostics", `İstemci hazır (hydration tamam), +${Math.round(Date.now() - start)}ms`);
+    // Kök layout'taki saf JS "watchdog"a hydration'ın başarıyla tamamlandığını
+    // bildirir; aksi halde 9 saniye sonra bağımsız tanılama paneli belirir.
+    window.__turnuvaMarkStage?.("hydrated");
 
     const onError = (event: ErrorEvent) => {
       logger.error("window-error", event.message || "Bilinmeyen script hatası", {

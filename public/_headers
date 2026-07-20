@@ -1,0 +1,15 @@
+# Not: Bu bir Vite/CRA projesi değil, Next.js App Router. index.html veya
+# /assets/* yok — hash'li derleme çıktıları /_next/static/* altında.
+# Netlify'ın Next.js çalıştırıcısı bu başlıkları zaten varsayılan olarak
+# doğru uyguluyor (doğrulandı: `curl -I` ile HTML için no-store, statik
+# parçalar için immutable görüldü); bu dosya bunu açıkça/kalıcı biçimde
+# garanti altına alır.
+
+# Hash'li JS/CSS parçaları: içerik değişince dosya adı da değişir, bu
+# yüzden sonsuza kadar (1 yıl) ve değişmez olarak önbelleklenebilir.
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Font dosyaları da hash'li ve değişmez.
+/_next/static/media/*
+  Cache-Control: public, max-age=31536000, immutable
