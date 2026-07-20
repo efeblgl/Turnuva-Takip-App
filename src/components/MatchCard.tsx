@@ -6,6 +6,7 @@ import { cn, formatDateShort, formatTime } from "@/lib/utils";
 import type { Match } from "@/lib/types";
 
 export interface MatchCardTeamInfo {
+  id?: string;
   name: string;
   logo_url: string | null;
   primary_color: string | null;
@@ -22,12 +23,13 @@ const PLACEHOLDER: MatchCardTeamInfo = {
 /** Takım satırından maç kartı bilgisine dönüştürücü. */
 export function teamInfoFrom(
   team:
-    | { name: string; logo_url: string | null; primary_color: string | null; code: string | null }
+    | { id?: string; name: string; logo_url: string | null; primary_color: string | null; code: string | null }
     | null
     | undefined
 ): MatchCardTeamInfo | null {
   if (!team) return null;
   return {
+    id: team.id,
     name: team.name,
     logo_url: team.logo_url,
     primary_color: team.primary_color,
@@ -69,19 +71,34 @@ function TeamSide({
   team: MatchCardTeamInfo;
   align: "left" | "right";
 }) {
-  return (
-    <div
-      className={cn(
-        "flex min-w-0 flex-1 items-center gap-2",
-        align === "right" && "flex-row-reverse text-right"
-      )}
-    >
+  const content = (
+    <>
       <TeamLogo logoUrl={team.logo_url} name={team.name} color={team.primary_color} code={team.code} size={32} />
       <span className="min-w-0 break-words text-sm font-semibold leading-tight">
         {team.name}
       </span>
-    </div>
+    </>
   );
+
+  const className = cn(
+    "flex min-w-0 flex-1 items-center gap-2",
+    align === "right" && "flex-row-reverse text-right"
+  );
+
+  // Takıma tıklanınca fikstür o takımın maçlarına filtrelenir
+  if (team.id) {
+    return (
+      <Link
+        href={`/fikstur?takim=${team.id}`}
+        className={cn(className, "relative z-10 rounded-lg hover:underline")}
+        title={`${team.name} maçlarını göster`}
+      >
+        {content}
+      </Link>
+    );
+  }
+
+  return <div className={className}>{content}</div>;
 }
 
 export function MatchCard({
@@ -91,6 +108,7 @@ export function MatchCard({
   venueName,
   contextLabel,
   href,
+  liveNow = false,
 }: {
   match: Match;
   home: MatchCardTeamInfo | null;
@@ -99,15 +117,27 @@ export function MatchCard({
   /** Grup adı, tur adı veya hafta bilgisi */
   contextLabel?: string | null;
   href: string;
+  /** Maç saati geldi (durum hâlâ "Planlandı" olsa bile rozet "Canlı" yazar) */
+  liveNow?: boolean;
 }) {
-  const isLive = (LIVE_STATUSES as string[]).includes(match.status);
+  const statusLive = (LIVE_STATUSES as string[]).includes(match.status);
+  const isLive = statusLive || (liveNow && match.status === "scheduled");
+  const badgeClass = isLive ? MATCH_STATUS_BADGE.in_progress : MATCH_STATUS_BADGE[match.status];
+  const badgeLabel = statusLive
+    ? MATCH_STATUS_LABELS[match.status]
+    : isLive
+      ? "Canlı"
+      : MATCH_STATUS_LABELS[match.status];
 
   return (
-    <Link
-      href={href}
-      className="card card-hover block"
-      aria-label={`${home?.name ?? "Belirlenecek"} - ${away?.name ?? "Belirlenecek"} maç detayı`}
-    >
+    <div className="card card-hover relative">
+      {/* Kartın tamamı maç detayına götürür; takım adları ayrıca tıklanabilir */}
+      <Link
+        href={href}
+        className="absolute inset-0 rounded-2xl"
+        aria-label={`${home?.name ?? "Belirlenecek"} - ${away?.name ?? "Belirlenecek"} maç detayı`}
+      />
+
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs font-medium text-muted">
           {contextLabel && <span>{contextLabel} · </span>}
@@ -116,12 +146,12 @@ export function MatchCard({
         </span>
         <Badge
           className={cn(
-            MATCH_STATUS_BADGE[match.status],
+            badgeClass,
             isLive && "animate-pulse"
           )}
         >
           {isLive && <span aria-hidden className="size-1.5 rounded-full bg-emerald-500" />}
-          {MATCH_STATUS_LABELS[match.status]}
+          {badgeLabel}
         </Badge>
       </div>
 
@@ -130,6 +160,6 @@ export function MatchCard({
         <ScoreBox match={match} />
         <TeamSide team={away ?? PLACEHOLDER} align="right" />
       </div>
-    </Link>
+    </div>
   );
 }

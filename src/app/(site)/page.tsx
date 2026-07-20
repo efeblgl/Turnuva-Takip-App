@@ -1,43 +1,27 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
-import { ArrowRight, CalendarDays, Megaphone, Trophy } from "lucide-react";
+import { ArrowRight, BarChart3, CalendarDays, Megaphone, Radio, Trophy } from "lucide-react";
 import { createClient } from "@/utils/supabase/server";
 import {
-  fetchPublicTournament, getPublishedAnnouncements, getScorersData,
-  getStandingsBundle, getVenues,
+  fetchPublicTournament, getGoalEvents, getGroups, getPublicTeams,
+  getPublishedAnnouncements, getPublishedMatches, getVenues,
 } from "@/lib/queries";
-import { computeTopScorers } from "@/lib/scorers";
-import { computeTournamentTotals } from "@/lib/stats";
 import { MatchCard, teamInfoFrom } from "@/components/MatchCard";
-import { Badge, EmptyState, SectionHeader, StatCard } from "@/components/ui";
-import { TeamLogo } from "@/components/TeamBadge";
+import { PresidentPopup } from "@/components/PresidentPopup";
+import { AutoRefresh } from "@/components/site/AutoRefresh";
+import { LiveMatchCard } from "@/components/site/LiveMatchCard";
+import { MatchStoryShare, type StoryTeam } from "@/components/site/MatchStoryShare";
+import { Badge, EmptyState, SectionHeader } from "@/components/ui";
 import {
   FINISHED_STATUSES, TOURNAMENT_STATUS_LABELS,
 } from "@/lib/labels";
-import { formatDate, formatDateShort, formatNumber, formatTime, todayInTurkey } from "@/lib/utils";
-import type { Match, PublicTeam } from "@/lib/types";
+import { selectLiveMatches } from "@/lib/live";
+import {
+  formatDate, formatDateShort, formatTime, nowTimeInTurkey, todayInTurkey,
+} from "@/lib/utils";
+import type { MatchEvent, PublicPlayer, PublicTeam } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
-
-function matchCardPropsFactory(
-  teamsById: Map<string, PublicTeam>,
-  venueNames: Map<string, string>,
-  groupNames: Map<string, string>
-) {
-  return (match: Match) => ({
-    match,
-    home: teamInfoFrom(match.home_team_id ? teamsById.get(match.home_team_id) : null),
-    away: teamInfoFrom(match.away_team_id ? teamsById.get(match.away_team_id) : null),
-    venueName: match.venue_id ? venueNames.get(match.venue_id) : null,
-    contextLabel:
-      match.stage === "knockout"
-        ? match.round_name
-        : match.group_id
-          ? groupNames.get(match.group_id) ?? match.round_name
-          : match.round_name,
-    href: `/maclar/${match.id}`,
-  });
-}
 
 export default async function HomePage() {
   const tournament = await fetchPublicTournament();
@@ -55,55 +39,169 @@ export default async function HomePage() {
   }
 
   const supabase = await createClient();
-  const [bundle, announcements, scorersData, venues, cardRows] = await Promise.all([
-    getStandingsBundle(supabase, tournament),
-    getPublishedAnnouncements(supabase, tournament.id, 6),
-    getScorersData(supabase, tournament.id),
+  const [matches, teams, groups, venues, announcements] = await Promise.all([
+    getPublishedMatches(supabase, tournament.id),
+    getPublicTeams(supabase, tournament.id),
+    getGroups(supabase, tournament.id),
     getVenues(supabase, tournament.id),
-    supabase
-      .from("cards")
-      .select("card_type, match:matches!inner(tournament_id)")
-      .eq("match.tournament_id", tournament.id)
-      .then(({ data }) => (data as Array<{ card_type: string }> | null) ?? []),
+    getPublishedAnnouncements(supabase, tournament.id, 6),
   ]);
 
-  const { matches, teamsById, teams, groups, tablesByGroup } = bundle;
-
-  const { count: playerCount } = await supabase
-    .from("public_players")
-    .select("id", { count: "exact", head: true })
-    .in("team_id", teams.map((t) => t.id));
-  const totals = computeTournamentTotals(matches);
-  const today = todayInTurkey();
-
-  const yellowTotal = cardRows.filter((c) => c.card_type === "yellow").length;
-  const redTotal = cardRows.length - yellowTotal;
-
-  const todaysMatches = matches.filter((m) => m.match_date === today && m.status !== "cancelled");
-  const upcoming = matches
-    .filter((m) => m.match_date && m.match_date > today && ["scheduled", "postponed"].includes(m.status))
-    .slice(0, 4);
-  const results = matches
-    .filter((m) => (FINISHED_STATUSES as string[]).includes(m.status))
-    .sort((a, b) => (b.match_date ?? "").localeCompare(a.match_date ?? "") || (b.start_time ?? "").localeCompare(a.start_time ?? ""))
-    .slice(0, 4);
-  const nextMatch = matches.find(
-    (m) => m.match_date && m.match_date >= today && m.status === "scheduled"
-  );
-
-  const importantAnnouncements = announcements.filter((a) => a.is_important).slice(0, 2);
-  const latestAnnouncements = announcements.filter((a) => !a.is_important).slice(0, 3);
-
-  const scorers = computeTopScorers(
-    scorersData.events, scorersData.cardCounts, scorersData.players, scorersData.teamMatchCounts
-  ).slice(0, 5);
-
+  const teamsById = new Map(teams.map((t) => [t.id, t]));
   const venueNames = new Map(venues.map((v) => [v.id, v.name]));
   const groupNames = new Map(groups.map((g) => [g.id, g.name]));
-  const cardProps = matchCardPropsFactory(teamsById, venueNames, groupNames);
+
+  const today = todayInTurkey();
+  const now = nowTimeInTurkey();
+
+  // Durumu canlıya çekilmiş veya saati gelmiş maçlar; sonraki maçın saati
+  // gelince öncekinin penceresi kapanır ve sıradaki maç ana ekrana geçer
+  const liveMatches = selectLiveMatches(matches, today, now);
+  const liveIds = new Set(liveMatches.map((m) => m.id));
+  // Günün tüm programı (canlıların altında listelenir; geçmiş skorlar dahil)
+  const todaysMatches = matches.filter((m) => m.match_date === today && m.status !== "cancelled");
+  const hasPendingToday =
+    liveMatches.length > 0 ||
+    todaysMatches.some((m) => !(FINISHED_STATUSES as string[]).includes(m.status));
+  // Sıradaki maç: saati henüz gelmemiş ilk planlı maç (canlı olanlar hariç)
+  const nextMatch = matches.find(
+    (m) =>
+      m.status === "scheduled" &&
+      m.match_date &&
+      (m.match_date > today ||
+        (m.match_date === today && (m.start_time ?? "").slice(0, 5) > now))
+  );
+
+  // Canlı maçların gol olayları ve golcü isimleri
+  const goalEvents = await getGoalEvents(supabase, liveMatches.map((m) => m.id));
+  const scorerIds = [...new Set(goalEvents.map((e) => e.player_id).filter(Boolean) as string[])];
+  const { data: scorerPlayers } = scorerIds.length
+    ? await supabase.from("public_players").select("*").in("id", scorerIds)
+    : { data: [] };
+  const playersById = new Map(
+    ((scorerPlayers as PublicPlayer[] | null) ?? []).map((p) => [p.id, p])
+  );
+
+  const scorerLine = (e: MatchEvent) =>
+    `${(e.player_id ? playersById.get(e.player_id)?.full_name : null) ?? "?"} ${e.minute ?? "?"}'${
+      e.event_type === "penalty_goal" ? " (P)" : e.event_type === "own_goal" ? " (KK)" : ""
+    }`;
+
+  const importantAnnouncements = announcements.filter((a) => a.is_important).slice(0, 2);
+
+  const contextLabelOf = (m: (typeof matches)[number]) =>
+    m.stage === "knockout"
+      ? m.round_name
+      : m.group_id
+        ? groupNames.get(m.group_id) ?? m.round_name
+        : m.round_name;
+
+  const storyTeam = (t: PublicTeam | null | undefined): StoryTeam | null =>
+    t ? { name: t.name, code: t.code, color: t.primary_color, logoUrl: t.logo_url } : null;
 
   return (
     <div className="container-page space-y-8 py-6">
+      {/* Girişte açılan görsel duyuru pop-up'ı */}
+      <PresidentPopup />
+
+      {/* Maç günü: skorlar elle yenilemeye gerek kalmadan güncellenir */}
+      {hasPendingToday && <AutoRefresh seconds={liveMatches.length > 0 ? 30 : 60} />}
+
+      {/* Canlı maçlar: skor, golcüler ve paylaşım (maç saati gelince otomatik belirir) */}
+      <section aria-label="Canlı maçlar">
+        {liveMatches.length === 0 ? (
+          <div className="card text-center">
+            <Radio className="mx-auto size-8 text-muted" aria-hidden />
+            <p className="mt-2 text-sm font-semibold">Şu anda oynanan maç yok</p>
+            {nextMatch ? (
+              <Link href={`/maclar/${nextMatch.id}`} className="mt-2 block hover:underline">
+                <span className="text-xs font-medium uppercase tracking-wide text-muted">Sıradaki maç</span>
+                <span className="mt-0.5 block text-sm font-bold">
+                  {teamsById.get(nextMatch.home_team_id ?? "")?.name ?? "?"} - {teamsById.get(nextMatch.away_team_id ?? "")?.name ?? "?"}
+                </span>
+                <span className="mt-0.5 block text-xs text-muted">
+                  {formatDateShort(nextMatch.match_date)} · {formatTime(nextMatch.start_time)}
+                  {nextMatch.venue_id && venueNames.get(nextMatch.venue_id) && ` · ${venueNames.get(nextMatch.venue_id)}`}
+                </span>
+              </Link>
+            ) : (
+              <p className="mt-1 text-xs text-muted">Planlanmış maç bulunmuyor.</p>
+            )}
+            <Link href="/fikstur" className="btn-secondary btn-sm mt-3 inline-flex">
+              <CalendarDays className="size-3.5" aria-hidden />
+              Tüm maçlar ve sonuçlar fikstürde
+            </Link>
+          </div>
+        ) : (
+          <div className={liveMatches.length > 1 ? "grid gap-3 md:grid-cols-2" : ""}>
+            {liveMatches.map((m) => {
+              const home = m.home_team_id ? teamsById.get(m.home_team_id) : null;
+              const away = m.away_team_id ? teamsById.get(m.away_team_id) : null;
+              const matchGoals = goalEvents.filter((e) => e.match_id === m.id);
+              const homeScorers = matchGoals.filter((e) => e.team_id === m.home_team_id).map(scorerLine);
+              const awayScorers = matchGoals.filter((e) => e.team_id === m.away_team_id).map(scorerLine);
+              const hasScore =
+                m.status !== "scheduled" && m.home_score !== null && m.away_score !== null;
+              return (
+                <LiveMatchCard
+                  key={m.id}
+                  match={m}
+                  home={teamInfoFrom(home)}
+                  away={teamInfoFrom(away)}
+                  venueName={m.venue_id ? venueNames.get(m.venue_id) : null}
+                  contextLabel={contextLabelOf(m)}
+                  href={`/maclar/${m.id}`}
+                  homeScorers={homeScorers}
+                  awayScorers={awayScorers}
+                  shareButton={
+                    <MatchStoryShare
+                      tournamentName={tournament.name}
+                      roundLabel={m.round_name ?? (m.stage === "knockout" ? "Eleme Maçı" : "Grup Maçı")}
+                      dateLabel={formatDate(m.match_date)}
+                      timeLabel={formatTime(m.start_time)}
+                      venueName={m.venue_id ? venueNames.get(m.venue_id) ?? null : null}
+                      played={hasScore}
+                      homeScore={m.home_score}
+                      awayScore={m.away_score}
+                      homePen={m.home_penalty_score}
+                      awayPen={m.away_penalty_score}
+                      home={storyTeam(home)}
+                      away={storyTeam(away)}
+                      homeScorers={homeScorers}
+                      awayScorers={awayScorers}
+                    />
+                  }
+                />
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Günün maçları: program, skorlar ve biten maçların sonuçları */}
+      {todaysMatches.length > 0 && (
+        <section aria-label="Günün maçları">
+          <SectionHeader
+            title="Günün Maçları"
+            action={<Link href="/fikstur" className="text-sm font-medium text-brand-700 hover:underline">Tüm fikstür</Link>}
+          />
+          <div className="grid gap-3 md:grid-cols-2">
+            {todaysMatches.map((m) => (
+              <MatchCard
+                key={m.id}
+                match={m}
+                home={teamInfoFrom(m.home_team_id ? teamsById.get(m.home_team_id) : null)}
+                away={teamInfoFrom(m.away_team_id ? teamsById.get(m.away_team_id) : null)}
+                venueName={m.venue_id ? venueNames.get(m.venue_id) : null}
+                contextLabel={contextLabelOf(m)}
+                href={`/maclar/${m.id}`}
+                liveNow={liveIds.has(m.id)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Turnuva tanıtım alanı */}
       <section className="card overflow-hidden p-0">
         <div className="bg-brand-800 px-5 py-6 text-white sm:px-8">
@@ -168,172 +266,39 @@ export default async function HomePage() {
         </section>
       )}
 
-      {/* Hızlı bilgi kartları */}
-      <section aria-label="Turnuva özeti" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Takım" value={formatNumber(teams.length)} />
-        <StatCard label="Oyuncu" value={formatNumber(playerCount ?? 0)} />
-        <StatCard label="Oynanan / Kalan Maç" value={`${totals.playedCount} / ${totals.remainingCount}`} />
-        <StatCard label="Toplam Gol" value={formatNumber(totals.totalGoals)} hint={`Maç başına ${totals.goalsPerMatch}`} />
-        <StatCard label="Sarı Kart" value={formatNumber(yellowTotal)} />
-        <StatCard label="Kırmızı Kart" value={formatNumber(redTotal)} />
-        <div className="card col-span-2 py-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted">Sıradaki Maç</p>
-          {nextMatch ? (
-            <Link href={`/maclar/${nextMatch.id}`} className="mt-1 block hover:underline">
-              <span className="text-sm font-bold">
-                {teamsById.get(nextMatch.home_team_id ?? "")?.name ?? "?"} - {teamsById.get(nextMatch.away_team_id ?? "")?.name ?? "?"}
-              </span>
-              <span className="mt-0.5 block text-xs text-muted">
-                {formatDateShort(nextMatch.match_date)} · {formatTime(nextMatch.start_time)}
-              </span>
-            </Link>
-          ) : (
-            <p className="mt-1 text-sm text-muted">Planlanmış maç bulunmuyor.</p>
-          )}
-        </div>
+      {/* Diğer sayfalara hızlı erişim */}
+      <section aria-label="Hızlı erişim" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Link href="/fikstur" className="card card-hover flex items-center gap-3">
+          <span className="rounded-full bg-brand-50 p-2 text-brand-700">
+            <CalendarDays className="size-5" aria-hidden />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">Fikstür</span>
+            <span className="block text-xs text-muted">Tüm maçlar, sonuçlar ve takım arama</span>
+          </span>
+          <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden />
+        </Link>
+        <Link href="/puan-durumu" className="card card-hover flex items-center gap-3">
+          <span className="rounded-full bg-brand-50 p-2 text-brand-700">
+            <BarChart3 className="size-5" aria-hidden />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">Puan Durumu</span>
+            <span className="block text-xs text-muted">Grup tabloları ve sıralama</span>
+          </span>
+          <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden />
+        </Link>
+        <Link href="/gol-kralligi" className="card card-hover flex items-center gap-3">
+          <span className="rounded-full bg-brand-50 p-2 text-brand-700">
+            <Trophy className="size-5" aria-hidden />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">Gol Krallığı</span>
+            <span className="block text-xs text-muted">En golcü oyuncular</span>
+          </span>
+          <ArrowRight className="size-4 shrink-0 text-muted" aria-hidden />
+        </Link>
       </section>
-
-      {/* Bugünün maçları */}
-      <section>
-        <SectionHeader
-          title="Bugünün Maçları"
-          action={<Link href="/fikstur" className="text-sm font-medium text-brand-700 hover:underline">Tüm fikstür</Link>}
-        />
-        {todaysMatches.length === 0 ? (
-          <EmptyState
-            icon={<CalendarDays className="size-8" aria-hidden />}
-            title="Bugün oynanacak maç bulunmuyor"
-            description="Yaklaşan maçlar için fikstür sayfasına göz atabilirsiniz."
-          />
-        ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {todaysMatches.map((m) => (
-              <MatchCard key={m.id} {...cardProps(m)} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Yaklaşan maçlar + son sonuçlar */}
-      <div className="grid gap-8 lg:grid-cols-2">
-        <section>
-          <SectionHeader title="Yaklaşan Maçlar" />
-          {upcoming.length === 0 ? (
-            <EmptyState title="Yaklaşan maç bulunmuyor" />
-          ) : (
-            <div className="space-y-3">
-              {upcoming.map((m) => (
-                <MatchCard key={m.id} {...cardProps(m)} />
-              ))}
-            </div>
-          )}
-        </section>
-        <section>
-          <SectionHeader
-            title="Son Sonuçlar"
-            action={<Link href="/fikstur?durum=tamamlanan" className="text-sm font-medium text-brand-700 hover:underline">Tümü</Link>}
-          />
-          {results.length === 0 ? (
-            <EmptyState title="Henüz tamamlanan maç yok" />
-          ) : (
-            <div className="space-y-3">
-              {results.map((m) => (
-                <MatchCard key={m.id} {...cardProps(m)} />
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-
-      {/* Grup puan durumları (kompakt) */}
-      {groups.length > 0 && (
-        <section>
-          <SectionHeader
-            title="Puan Durumu"
-            action={<Link href="/puan-durumu" className="text-sm font-medium text-brand-700 hover:underline">Detaylı tablo</Link>}
-          />
-          <div className="grid gap-3 md:grid-cols-2">
-            {groups.map((group) => {
-              const rows = (tablesByGroup.get(group.id) ?? []).slice(0, 4);
-              return (
-                <div key={group.id} className="card">
-                  <p className="mb-2 flex items-center gap-2 text-sm font-bold">
-                    <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: group.color ?? "#64748B" }} />
-                    {group.name}
-                  </p>
-                  {rows.length === 0 ? (
-                    <p className="py-3 text-sm text-muted">Bu grupta takım bulunmuyor.</p>
-                  ) : (
-                    <ol className="divide-y divide-line">
-                      {rows.map((row) => {
-                        const team = teamsById.get(row.teamId);
-                        return (
-                          <li key={row.teamId} className="flex items-center gap-2 py-1.5">
-                            <span className="w-5 text-center text-xs font-bold text-muted">{row.rank}</span>
-                            <TeamLogo logoUrl={team?.logo_url} name={row.teamName} color={team?.primary_color} code={team?.code} size={20} />
-                            <span className="min-w-0 flex-1 truncate text-sm font-medium">{row.teamName}</span>
-                            <span className="text-xs tabular-nums text-muted">{row.played} maç</span>
-                            <span className="w-8 text-right text-sm font-bold tabular-nums">{row.points}</span>
-                          </li>
-                        );
-                      })}
-                    </ol>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Gol krallığı ilk 5 + son duyurular */}
-      <div className="grid gap-8 lg:grid-cols-2">
-        <section>
-          <SectionHeader
-            title="Gol Krallığı"
-            action={<Link href="/gol-kralligi" className="text-sm font-medium text-brand-700 hover:underline">Tam liste</Link>}
-          />
-          {scorers.length === 0 ? (
-            <EmptyState title="Gol krallığı verisi oluşmadı" description="İlk goller atıldığında liste burada görünecek." />
-          ) : (
-            <div className="card divide-y divide-line p-0">
-              {scorers.map((s) => {
-                const team = teamsById.get(s.teamId);
-                return (
-                  <Link key={s.playerId} href={`/oyuncular/${s.playerId}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50">
-                    <span className="w-5 text-center text-sm font-bold text-muted">{s.rank}</span>
-                    <TeamLogo logoUrl={team?.logo_url} name={team?.name ?? ""} color={team?.primary_color} code={team?.code} size={24} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold">{s.fullName}</span>
-                      <span className="block truncate text-xs text-muted">{team?.name}</span>
-                    </span>
-                    <span className="text-base font-bold tabular-nums">{s.goals}</span>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </section>
-        <section>
-          <SectionHeader
-            title="Son Duyurular"
-            action={<Link href="/duyurular" className="text-sm font-medium text-brand-700 hover:underline">Tümü</Link>}
-          />
-          {latestAnnouncements.length === 0 && importantAnnouncements.length === 0 ? (
-            <EmptyState title="Henüz duyuru yayınlanmadı" />
-          ) : (
-            <div className="space-y-3">
-              {(latestAnnouncements.length > 0 ? latestAnnouncements : importantAnnouncements).map((a) => (
-                <Link key={a.id} href={`/duyurular/${a.slug}`} className="card card-hover block">
-                  <p className="text-xs text-muted">{formatDate(a.publish_date)}</p>
-                  <p className="mt-0.5 text-sm font-semibold">{a.title}</p>
-                  {a.summary && <p className="mt-1 line-clamp-2 text-sm text-muted">{a.summary}</p>}
-                </Link>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
     </div>
   );
 }

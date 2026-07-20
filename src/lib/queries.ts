@@ -122,6 +122,19 @@ export async function getMatchEvents(supabase: Client, matchId: string): Promise
   return (data as MatchEvent[]) ?? [];
 }
 
+/** Verilen maçların gol olayları (ana sayfadaki canlı maç kartları için). */
+export async function getGoalEvents(supabase: Client, matchIds: string[]): Promise<MatchEvent[]> {
+  if (matchIds.length === 0) return [];
+  const { data } = await supabase
+    .from("match_events")
+    .select("*")
+    .in("match_id", matchIds)
+    .in("event_type", ["goal", "penalty_goal", "own_goal"])
+    .order("minute", { ascending: true, nullsFirst: true })
+    .order("created_at");
+  return (data as MatchEvent[]) ?? [];
+}
+
 // ---------------------------------------------------------------------------
 // Duyurular ve ayarlar
 // ---------------------------------------------------------------------------

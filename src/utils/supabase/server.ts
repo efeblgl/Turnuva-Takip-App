@@ -1,5 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { createLoggingFetch } from "@/lib/fetchWithTimeout";
+import { logger } from "@/lib/logger";
 
 /**
  * Sunucu tarafında (Server Component, Server Action, Route Handler)
@@ -8,11 +10,20 @@ import { cookies } from "next/headers";
  */
 export async function createClient() {
   const cookieStore = await cookies();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!url || !key) {
+    logger.error(
+      "supabase-server",
+      "Supabase ortam değişkenleri eksik (NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)."
+    );
+  }
 
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    url!,
+    key!,
     {
+      global: { fetch: createLoggingFetch("supabase-server") },
       cookies: {
         getAll() {
           return cookieStore.getAll();

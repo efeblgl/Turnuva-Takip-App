@@ -175,6 +175,10 @@ export function ScoreEntry({
                 <option key={s} value={s}>{MATCH_STATUS_LABELS[s]}</option>
               ))}
             </select>
+            <p className="mt-1 text-xs text-muted">
+              Canlı skor için maç sürerken durumu &quot;Başladı&quot; / &quot;İkinci yarı&quot; seçip
+              güncel skoru kaydedin; site otomatik güncellenir. Maç bitince &quot;Tamamlandı&quot; yapın.
+            </p>
           </div>
           {showPenalties && (
             <div className="sm:col-span-2">

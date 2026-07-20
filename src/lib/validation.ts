@@ -16,32 +16,33 @@ const optionalHexColor = z
   .union([hexColor, z.literal("")])
   .transform((v) => (v === "" ? null : v));
 
+// Not: JSON gövdeli aksiyonlar (ör. skor girişi) boş alanları "" yerine null
+// gönderir; bu yüzden tüm "optional*" yardımcıları null'ı da kabul eder.
 const optionalText = z
-  .string()
-  .trim()
-  .transform((v) => (v === "" ? null : v));
+  .union([z.string().trim(), z.null()])
+  .transform((v) => (v === "" || v === null ? null : v));
 
 const optionalDate = z
-  .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Geçerli bir tarih girin."), z.literal("")])
-  .transform((v) => (v === "" ? null : v));
+  .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Geçerli bir tarih girin."), z.literal(""), z.null()])
+  .transform((v) => (v === "" || v === null ? null : v));
 
 const requiredDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Tarih boş bırakılamaz.");
 
 const optionalTime = z
-  .union([z.string().regex(/^\d{2}:\d{2}/, "Geçerli bir saat girin."), z.literal("")])
-  .transform((v) => (v === "" ? null : v.slice(0, 5)));
+  .union([z.string().regex(/^\d{2}:\d{2}/, "Geçerli bir saat girin."), z.literal(""), z.null()])
+  .transform((v) => (v === "" || v === null ? null : v.slice(0, 5)));
 
 const optionalInt = (min: number, max: number, message: string) =>
   z
-    .union([z.literal(""), z.coerce.number().int(message).min(min, message).max(max, message)])
-    .transform((v) => (v === "" ? null : v));
+    .union([z.literal(""), z.null(), z.coerce.number().int(message).min(min, message).max(max, message)])
+    .transform((v) => (v === "" || v === null ? null : v));
 
 const uuid = z.string().uuid("Geçersiz kayıt.");
 const optionalUuid = z
-  .union([uuid, z.literal("")])
-  .transform((v) => (v === "" ? null : v));
+  .union([uuid, z.literal(""), z.null()])
+  .transform((v) => (v === "" || v === null ? null : v));
 
 // ---------------------------------------------------------------------------
 // Turnuva

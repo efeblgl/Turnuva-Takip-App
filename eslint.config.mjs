@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Netlify CLI'nin ürettiği geçici derleme çıktıları
+    ".netlify/**",
   ]),
   {
     rules: {

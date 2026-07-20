@@ -59,6 +59,23 @@ export function todayInTurkey(): string {
   return parts; // en-CA formatı YYYY-MM-DD üretir
 }
 
+/** Türkiye saatine göre şu anki saat: "19:05" */
+export function nowTimeInTurkey(): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: TZ,
+  }).format(new Date());
+}
+
+/** "19:00" + 110 -> "20:50" (gün sonunu aşarsa 23:59'da durur) */
+export function addMinutesToTime(time: string, minutes: number): string {
+  const m = time.match(/^(\d{2}):(\d{2})/);
+  if (!m) return time;
+  const total = Math.min(Number(m[1]) * 60 + Number(m[2]) + minutes, 23 * 60 + 59);
+  const h = String(Math.floor(total / 60)).padStart(2, "0");
+  const mm = String(total % 60).padStart(2, "0");
+  return `${h}:${mm}`;
+}
+
 /** Tarihe gün ekle: addDays("2026-07-17", 3) -> "2026-07-20" */
 export function addDays(date: string, days: number): string {
   const d = new Date(`${date}T12:00:00Z`);

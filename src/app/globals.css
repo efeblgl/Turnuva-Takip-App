@@ -173,6 +173,95 @@ html, body {
   50%      { opacity: 1; }
 }
 
+/* ---------------------------------------------------------------------------
+ * Duyuru pop-up'ı (başkan görseli)
+ * Arka plan kararır + bulanıklaşır; panel yumuşak fade+scale ile açılır ve
+ * kısa bir animasyonla kapanır. Boyutlar: mobil min(90vw, 360px) / 80vh,
+ * tablet 440px / 600px, masaüstü 520px / 680px (taşmaya karşı vh sınırlı).
+ * ------------------------------------------------------------------------- */
+.promo-popup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px; /* mobil dış boşluk: en az 16px */
+  background: rgb(0 0 0 / 0.55);
+  /* Bulanıklık bileşende Tailwind "backdrop-blur-sm" ile verilir (elle yazılan
+     backdrop-filter, Tailwind v4 CSS işlemcisi tarafından çıktıdan atılıyor) */
+  animation: splash-fade-in 0.25s ease-out both;
+}
+
+.promo-popup-overlay--closing {
+  animation: splash-fade-out 0.2s ease-in forwards;
+  pointer-events: none;
+}
+
+.promo-popup-panel {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 25px 60px -15px rgb(0 0 0 / 0.45);
+  animation: promo-popup-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.promo-popup-overlay--closing .promo-popup-panel {
+  animation: promo-popup-out 0.2s ease-in forwards;
+}
+
+/* Görsel oranı korunur (contain); dikey görseller kırpılmadan tamamı görünür */
+.promo-popup-img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(90vw, 360px);
+  max-height: 80vh;
+  object-fit: contain;
+}
+
+@media (min-width: 640px) {
+  .promo-popup-img { max-width: 440px; max-height: min(600px, 80vh); }
+}
+
+@media (min-width: 1024px) {
+  .promo-popup-img { max-width: 520px; max-height: min(680px, 80vh); }
+}
+
+.promo-popup-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  background: rgb(255 255 255 / 0.92);
+  color: #1f2937;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.promo-popup-close:hover { background: #ffffff; transform: scale(1.05); }
+.promo-popup-close:focus-visible {
+  outline: 2px solid var(--color-brand-600, #16a34a);
+  outline-offset: 2px;
+}
+
+@keyframes promo-popup-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes promo-popup-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.95); }
+}
+
 /* Erişilebilirlik: kullanıcı azaltılmış hareket istiyorsa animasyonları kapat */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

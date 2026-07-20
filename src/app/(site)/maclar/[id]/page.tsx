@@ -7,7 +7,9 @@ import { fetchPublicTournament, getMatchEvents, getPublishedMatches } from "@/li
 import { Badge, EmptyState } from "@/components/ui";
 import { TeamLogo } from "@/components/TeamBadge";
 import { MatchCard, teamInfoFrom } from "@/components/MatchCard";
+import { AutoRefresh } from "@/components/site/AutoRefresh";
 import { MatchStoryShare, type StoryTeam } from "@/components/site/MatchStoryShare";
+import { isMatchLiveNow } from "@/lib/live";
 import {
   EVENT_TYPE_LABELS, FINISHED_STATUSES, FORFEIT_TYPE_LABELS, LIVE_STATUSES,
   MATCH_STATUS_BADGE, MATCH_STATUS_LABELS,
@@ -175,6 +177,9 @@ export default async function MatchDetailPage({
 
   return (
     <div className="container-page space-y-5 py-6">
+      {/* Canlı maçta skor otomatik yenilenir */}
+      {isMatchLiveNow(match) && <AutoRefresh seconds={30} />}
+
       {/* Skor kartı */}
       <section className="card">
         <div className="mb-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center text-xs text-muted">

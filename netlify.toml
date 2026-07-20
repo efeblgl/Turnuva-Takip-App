@@ -1,0 +1,5 @@
+# Oturum koruması src/proxy.ts ile sağlanır (Next 16 konvansiyonu, Node runtime).
+# Build webpack ile alınır: Turbopack çıktısı Netlify eklentisiyle sorun çıkarabiliyor.
+[build]
+  command = "npx next build --webpack"
+  publish = ".next"

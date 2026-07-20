@@ -21,15 +21,23 @@ export const metadata: Metadata = {
 function applyFilters(
   matches: Match[],
   params: Record<string, string | undefined>,
-  today: string
+  today: string,
+  teamNames: Map<string, string>
 ): Match[] {
   let result = matches;
-  const { durum, grup, takim, saha, hafta } = params;
+  const { durum, grup, takim, saha, hafta, ara } = params;
 
   if (grup) result = result.filter((m) => m.group_id === grup);
   if (takim) result = result.filter((m) => m.home_team_id === takim || m.away_team_id === takim);
   if (saha) result = result.filter((m) => m.venue_id === saha);
   if (hafta) result = result.filter((m) => String(m.week_number ?? "") === hafta);
+  if (ara) {
+    // Takım adına göre serbest arama (Türkçe harflere duyarsız karşılaştırma)
+    const q = ara.trim().toLocaleLowerCase("tr");
+    const matchesName = (teamId: string | null) =>
+      teamId !== null && (teamNames.get(teamId) ?? "").toLocaleLowerCase("tr").includes(q);
+    result = result.filter((m) => matchesName(m.home_team_id) || matchesName(m.away_team_id));
+  }
 
   switch (durum) {
     case "bugun":
@@ -80,7 +88,8 @@ export default async function FixturePage({
   ]);
 
   const today = todayInTurkey();
-  const filtered = applyFilters(matches, params, today);
+  const teamNames = new Map(teams.map((t) => [t.id, t.name]));
+  const filtered = applyFilters(matches, params, today, teamNames);
 
   const teamsById = new Map(teams.map((t) => [t.id, t]));
   const venueNames = new Map(venues.map((v) => [v.id, v.name]));
@@ -104,7 +113,11 @@ export default async function FixturePage({
       <div>
         <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Fikstür</h1>
         <p className="mt-1 text-sm text-muted">
-          {filtered.length} maç listeleniyor
+          {params.takim && teamNames.has(params.takim)
+            ? `${teamNames.get(params.takim)}: ${filtered.length} maç`
+            : params.ara
+              ? `"${params.ara}" için ${filtered.length} maç`
+              : `${filtered.length} maç listeleniyor`}
         </p>
       </div>
 

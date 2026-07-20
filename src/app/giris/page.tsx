@@ -15,6 +15,7 @@ function LoginForm() {
   const reset = useActionForm(resetPasswordAction);
 
   const inactive = searchParams.get("hata") === "pasif";
+  const connectionError = searchParams.get("hata") === "baglanti";
 
   return (
     <div className="w-full max-w-sm">
@@ -33,6 +34,12 @@ function LoginForm() {
       {inactive && (
         <p className="mb-4 rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
           Hesabınız pasif durumda. Yöneticinizle iletişime geçin.
+        </p>
+      )}
+
+      {connectionError && (
+        <p className="mb-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Sunucuyla bağlantı kurulamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.
         </p>
       )}
 

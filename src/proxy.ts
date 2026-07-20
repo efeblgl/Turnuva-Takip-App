@@ -1,9 +1,11 @@
 import { type NextRequest } from "next/server";
-import { updateSession } from "@/utils/supabase/middleware";
+import { updateSession } from "@/utils/supabase/session";
 
 /**
  * Next.js 16 proxy'si (eski adıyla middleware).
- * Her istekte Supabase oturumunu yeniler ve panel rotalarını korur.
+ * Her istekte Supabase oturumunu yeniler ve panel rotalarını korur:
+ *  - /panel/*  -> giriş yapılmamışsa /giris sayfasına yönlendirir
+ *  - /giris    -> zaten giriş yapılmışsa /panel sayfasına yönlendirir
  */
 export async function proxy(request: NextRequest) {
   return await updateSession(request);
