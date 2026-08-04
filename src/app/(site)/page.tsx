@@ -9,9 +9,11 @@ import {
 import { MatchCard, teamInfoFrom } from "@/components/MatchCard";
 import { PresidentPopup } from "@/components/PresidentPopup";
 import { AutoRefresh } from "@/components/site/AutoRefresh";
+import { LiveKnockoutBracket } from "@/components/site/LiveKnockoutBracket";
 import { LiveMatchCard } from "@/components/site/LiveMatchCard";
 import { MatchStoryShare, type StoryTeam } from "@/components/site/MatchStoryShare";
 import { Badge, EmptyState, SectionHeader } from "@/components/ui";
+import { championTitleFor } from "@/lib/bracket";
 import {
   FINISHED_STATUSES, TOURNAMENT_STATUS_LABELS,
 } from "@/lib/labels";
@@ -263,6 +265,26 @@ export default async function HomePage() {
               <ArrowRight className="size-4 shrink-0 text-amber-600" aria-hidden />
             </Link>
           ))}
+        </section>
+      )}
+
+      {/* Son 16 eleme ağacı: eleme aşaması başladığında (en az bir eleme maçı
+          oluşturulduğunda) görünür; grup aşamasında henüz alakalı olmadığı
+          için ana sayfayı erken doldurmaz. */}
+      {matches.some((m) => m.stage === "knockout") && (
+        <section aria-label="Son 16 eleme ağacı">
+          <LiveKnockoutBracket
+            tournamentId={tournament.id}
+            initialMatches={matches.filter((m) => m.stage === "knockout")}
+            teamsById={teamsById}
+            venueNamesById={venueNames}
+            variant="compact"
+            championTitle={championTitleFor(tournament)}
+            title="Son 16 Eleme Ağacı"
+            description="16 takımın şampiyonluk yolculuğunu ve canlı skorları takip edin."
+            ctaHref="/eleme"
+            ctaLabel="Tüm Eleme Ağacını Gör"
+          />
         </section>
       )}
 

@@ -7,7 +7,7 @@
  *  - Manuel eşleşme
  * Kazananlar skor girişinde otomatik olarak sonraki tura taşınır.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -16,9 +16,11 @@ import { generateKnockoutAction, deleteKnockoutAction, type KnockoutPairInput } 
 import { crossGroupPairs, shuffle } from "@/lib/fixtures";
 import { ConfirmButton } from "@/components/Modal";
 import { Badge } from "@/components/ui";
+import { KnockoutBracket } from "@/components/site/KnockoutBracket";
+import { buildKnockoutBracket } from "@/lib/bracket";
 import { KNOCKOUT_ROUND_LABELS, KNOCKOUT_ROUND_ORDER, MATCH_STATUS_BADGE, MATCH_STATUS_LABELS } from "@/lib/labels";
 import { formatDateShort, formatTime } from "@/lib/utils";
-import type { KnockoutRound, Match } from "@/lib/types";
+import type { KnockoutRound, Match, PublicTeam } from "@/lib/types";
 
 interface TeamOption {
   id: string;
@@ -44,14 +46,18 @@ export function KnockoutManager({
   qualifiedGroups,
   knockoutMatches,
   teamNames,
+  allTeams,
 }: {
   tournamentId: string;
   teams: TeamOption[];
   qualifiedGroups: QualifiedGroup[];
   knockoutMatches: Match[];
   teamNames: Record<string, string>;
+  /** Bracket önizlemesi için logo/renk dahil tam takım verisi. */
+  allTeams: PublicTeam[];
 }) {
   const router = useRouter();
+  const teamsById = useMemo(() => new Map(allTeams.map((t) => [t.id, t])), [allTeams]);
   const suggestedPairCount = Math.max(1, Math.floor((qualifiedGroups.reduce((s, g) => s + g.qualifiers.length, 0)) / 2));
   const defaultRound =
     START_ROUNDS.find((r) => r.pairCount === suggestedPairCount)?.round ?? "quarter_final";
@@ -128,8 +134,20 @@ export function KnockoutManager({
   // Mevcut eleme ağacı varsa listeyi göster
   if (knockoutMatches.length > 0) {
     const rounds = KNOCKOUT_ROUND_ORDER.filter((r) => knockoutMatches.some((m) => m.knockout_round === r));
+    const bracket = buildKnockoutBracket(knockoutMatches);
     return (
       <div className="space-y-5">
+        {bracket.hasAnyMatch && (
+          <section className="card overflow-x-auto">
+            <KnockoutBracket
+              bracket={bracket}
+              teamsById={teamsById}
+              variant="full"
+              title="Bracket Önizleme"
+              description="Sol/sağ yerleşimin doğru kurulduğunu buradan kontrol edebilirsiniz."
+            />
+          </section>
+        )}
         {rounds.map((round) => (
           <section key={round}>
             <h2 className="mb-2 flex items-center gap-2 text-base font-bold">

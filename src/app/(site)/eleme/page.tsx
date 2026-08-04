@@ -1,27 +1,22 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Trophy } from "lucide-react";
 import { createClient } from "@/utils/supabase/server";
 import { fetchPublicTournament, getPublicTeams, getPublishedMatches, getVenues } from "@/lib/queries";
 import { MatchCard, teamInfoFrom } from "@/components/MatchCard";
+import { LiveKnockoutBracket } from "@/components/site/LiveKnockoutBracket";
 import { EmptyState } from "@/components/ui";
+import { championTitleFor, otherKnockoutMatches } from "@/lib/bracket";
 import { KNOCKOUT_ROUND_LABELS, KNOCKOUT_ROUND_ORDER } from "@/lib/labels";
-import { cn } from "@/lib/utils";
 import type { KnockoutRound } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Eleme Ağacı",
-  description: "Eleme aşaması eşleşmeleri: çeyrek final, yarı final ve final.",
+  description: "16 takımlı Son 16 eleme ağacı: çeyrek final, yarı final ve final eşleşmeleri, canlı skorlar.",
 };
 
-export default async function KnockoutPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ tur?: string }>;
-}) {
-  const { tur } = await searchParams;
+export default async function KnockoutPage() {
   const tournament = await fetchPublicTournament();
   if (!tournament) {
     return (
@@ -40,92 +35,65 @@ export default async function KnockoutPage({
 
   const knockoutMatches = matches.filter((m) => m.stage === "knockout");
   const teamsById = new Map(teams.map((t) => [t.id, t]));
-  const venueNames = new Map(venues.map((v) => [v.id, v.name]));
+  const venueNamesById = new Map(venues.map((v) => [v.id, v.name]));
 
-  const rounds = KNOCKOUT_ROUND_ORDER.filter((r) =>
-    knockoutMatches.some((m) => m.knockout_round === r)
-  );
-
-  if (rounds.length === 0) {
+  if (knockoutMatches.length === 0) {
     return (
       <div className="container-page space-y-4 py-6">
         <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Eleme Ağacı</h1>
         <EmptyState
           icon={<Trophy className="size-8" aria-hidden />}
           title="Eleme aşaması henüz başlamadı"
-          description="Grup maçları tamamlandığında eşleşmeler burada yayınlanacak."
+          description="Grup maçları tamamlandığında Son 16 eşleşmeleri burada yayınlanacak."
         />
       </div>
     );
   }
 
-  const activeRound: KnockoutRound = rounds.includes(tur as KnockoutRound)
-    ? (tur as KnockoutRound)
-    : rounds[0];
-
-  const roundMatches = (round: KnockoutRound) =>
-    knockoutMatches
-      .filter((m) => m.knockout_round === round)
-      .sort((a, b) => (a.bracket_position ?? 0) - (b.bracket_position ?? 0));
+  // Bu bileşenin kapsamadığı diğer eleme maçları (varsa Son 32 / Üçüncülük);
+  // mevcut sistemde bu turlar da desteklenir, ana ağaçtan gizlenmez.
+  const otherRounds = otherKnockoutMatches(knockoutMatches);
+  const otherRoundNames = KNOCKOUT_ROUND_ORDER.filter((r) => otherRounds.some((m) => m.knockout_round === r));
 
   return (
-    <div className="container-page space-y-4 py-6">
-      <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Eleme Ağacı</h1>
+    <div className="mx-auto w-full max-w-[2000px] space-y-8 px-4 py-6 sm:px-6">
+      <LiveKnockoutBracket
+        tournamentId={tournament.id}
+        initialMatches={knockoutMatches}
+        teamsById={teamsById}
+        venueNamesById={venueNamesById}
+        variant="full"
+        championTitle={championTitleFor(tournament)}
+        title="Eleme Ağacı"
+        description="16 takımın şampiyonluk yolculuğunu ve canlı skorları takip edin."
+      />
 
-      {/* Mobil: tur seçici + tek tur listesi (şartname madde 28) */}
-      <div className="lg:hidden">
-        <nav aria-label="Tur seçimi" className="flex gap-1 overflow-x-auto pb-1">
-          {rounds.map((round) => (
-            <Link
-              key={round}
-              href={`/eleme?tur=${round}`}
-              className={cn(
-                "whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium",
-                activeRound === round ? "bg-brand-700 text-white" : "bg-surface text-gray-600 border border-line"
-              )}
-              aria-current={activeRound === round ? "page" : undefined}
-            >
-              {KNOCKOUT_ROUND_LABELS[round]}
-            </Link>
-          ))}
-        </nav>
-        <div className="mt-3 space-y-3">
-          {roundMatches(activeRound).map((m) => (
-            <MatchCard
-              key={m.id}
-              match={m}
-              home={teamInfoFrom(m.home_team_id ? teamsById.get(m.home_team_id) : null)}
-              away={teamInfoFrom(m.away_team_id ? teamsById.get(m.away_team_id) : null)}
-              venueName={m.venue_id ? venueNames.get(m.venue_id) : null}
-              contextLabel={KNOCKOUT_ROUND_LABELS[activeRound]}
-              href={`/maclar/${m.id}`}
-            />
+      {otherRoundNames.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="section-title">Diğer Eleme Maçları</h2>
+          {otherRoundNames.map((round: KnockoutRound) => (
+            <section key={round} aria-label={KNOCKOUT_ROUND_LABELS[round]}>
+              <h3 className="mb-2 text-sm font-bold text-muted">{KNOCKOUT_ROUND_LABELS[round]}</h3>
+              <div className="grid gap-3 md:grid-cols-2">
+                {otherRounds
+                  .filter((m) => m.knockout_round === round)
+                  .sort((a, b) => (a.bracket_position ?? 0) - (b.bracket_position ?? 0))
+                  .map((m) => (
+                    <MatchCard
+                      key={m.id}
+                      match={m}
+                      home={teamInfoFrom(m.home_team_id ? teamsById.get(m.home_team_id) : null)}
+                      away={teamInfoFrom(m.away_team_id ? teamsById.get(m.away_team_id) : null)}
+                      venueName={m.venue_id ? venueNamesById.get(m.venue_id) : null}
+                      contextLabel={KNOCKOUT_ROUND_LABELS[round]}
+                      href={`/maclar/${m.id}`}
+                    />
+                  ))}
+              </div>
+            </section>
           ))}
         </div>
-      </div>
-
-      {/* Masaüstü: tur sütunlu ağaç görünümü */}
-      <div className="hidden gap-4 overflow-x-auto lg:grid" style={{ gridTemplateColumns: `repeat(${rounds.length}, minmax(260px, 1fr))` }}>
-        {rounds.map((round) => (
-          <section key={round} aria-label={KNOCKOUT_ROUND_LABELS[round]}>
-            <h2 className="mb-3 text-center text-sm font-bold text-muted">
-              {KNOCKOUT_ROUND_LABELS[round]}
-            </h2>
-            <div className="flex h-full flex-col justify-around gap-3">
-              {roundMatches(round).map((m) => (
-                <MatchCard
-                  key={m.id}
-                  match={m}
-                  home={teamInfoFrom(m.home_team_id ? teamsById.get(m.home_team_id) : null)}
-                  away={teamInfoFrom(m.away_team_id ? teamsById.get(m.away_team_id) : null)}
-                  venueName={m.venue_id ? venueNames.get(m.venue_id) : null}
-                  href={`/maclar/${m.id}`}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
+      )}
     </div>
   );
 }

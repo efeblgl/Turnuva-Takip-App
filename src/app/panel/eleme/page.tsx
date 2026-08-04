@@ -54,6 +54,7 @@ export default async function PanelKnockoutPage() {
         qualifiedGroups={qualifiedGroups}
         knockoutMatches={(knockoutRes.data as Match[] | null) ?? []}
         teamNames={teamNames}
+        allTeams={bundle.teams}
       />
     </div>
   );
