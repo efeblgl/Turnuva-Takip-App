@@ -318,6 +318,20 @@ export async function publishFixtureAction(tournamentId: string): Promise<Action
 // Eleme aşaması
 // ---------------------------------------------------------------------------
 
+/** Turnuvanın taslak eleme maçlarını topluca yayınlar (grup maçlarına dokunmaz). */
+export async function publishKnockoutAction(tournamentId: string): Promise<ActionResult> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("matches")
+    .update({ is_published: true })
+    .eq("tournament_id", tournamentId)
+    .eq("stage", "knockout")
+    .eq("is_published", false);
+  if (error) return { ok: false, message: `Eleme maçları yayınlanamadı: ${error.message}` };
+  revalidateAll();
+  return { ok: true, message: "Eleme maçları yayınlandı." };
+}
+
 export interface KnockoutPairInput {
   home: string | null;
   away: string | null;

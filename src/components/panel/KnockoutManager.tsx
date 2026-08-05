@@ -11,8 +11,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { Loader2, Shuffle, Trash2, Trophy, Wand2 } from "lucide-react";
-import { generateKnockoutAction, deleteKnockoutAction, type KnockoutPairInput } from "@/lib/actions/matches";
+import { Loader2, Shuffle, Trash2, Trophy, Upload, Wand2 } from "lucide-react";
+import { generateKnockoutAction, deleteKnockoutAction, publishKnockoutAction, type KnockoutPairInput } from "@/lib/actions/matches";
 import { crossGroupPairs, shuffle } from "@/lib/fixtures";
 import { ConfirmButton } from "@/components/Modal";
 import { Badge } from "@/components/ui";
@@ -135,8 +135,26 @@ export function KnockoutManager({
   if (knockoutMatches.length > 0) {
     const rounds = KNOCKOUT_ROUND_ORDER.filter((r) => knockoutMatches.some((m) => m.knockout_round === r));
     const bracket = buildKnockoutBracket(knockoutMatches);
+    const draftCount = knockoutMatches.filter((m) => !m.is_published).length;
     return (
       <div className="space-y-5">
+        {draftCount > 0 && (
+          <div className="card flex flex-wrap items-center justify-between gap-3 border-amber-200 bg-amber-50">
+            <p className="text-sm text-amber-800">
+              {draftCount} eleme maçı taslak durumunda — halka açık sitede ve ana sayfada görünmüyor.
+            </p>
+            <ConfirmButton
+              action={publishKnockoutAction.bind(null, tournamentId)}
+              title="Eleme maçlarını yayınla"
+              description={`${draftCount} taslak maç halka açık sitede yayınlanacak.`}
+              confirmLabel="Yayınla"
+              className="btn-sm"
+            >
+              <Upload className="size-3.5" aria-hidden />
+              Taslakları Yayınla ({draftCount})
+            </ConfirmButton>
+          </div>
+        )}
         {bracket.hasAnyMatch && (
           <section className="card overflow-x-auto">
             <KnockoutBracket
