@@ -1,12 +1,39 @@
+"use client";
+
+/**
+ * "Kupa Yolu" - zümrüt/turkuaz, İKİ TARAFTAN MERKEZE yakınsayan simetrik
+ * eleme ağacı görünümü.
+ *
+ * TEK YERLEŞİM: masaüstü ve mobil AYNI bracket'ı kullanır (ayrı bir mobil
+ * arayüz/sekme yoktur). Dar ekranlarda yerleşim değişmez, yalnızca kart
+ * genişlikleri bir miktar küçülür ve bracket yatay olarak kaydırılır;
+ * açılışta kaydırma konumu merkeze (final + kupa) ayarlanır.
+ *
+ * Sütun sırası: SOL SON 16 → SOL ÇEYREK FİNAL → SOL YARI FİNAL → MERKEZ
+ * (KUPA + FİNAL + 3.'LÜK) → SAĞ YARI FİNAL → SAĞ ÇEYREK FİNAL → SAĞ SON 16.
+ * `lib/bracket.ts`'teki `left`/`right` alanları (bracket_position: Son 16
+ * sol 1-4/sağ 5-8, Çeyrek Final sol 1-2/sağ 3-4, Yarı Final sol 1/sağ 2)
+ * BİREBİR bu yerleşime karşılık gelir — veri katmanında değişiklik YOK.
+ *
+ * Ara turlar (ÇF/YF) gerçek DOM ölçümüyle besleyen iki kartın tam ortasına
+ * konumlanır (bkz. useBracketGeometry). Merkez sütunu ise JS ile
+ * konumlandırılmaz: her iki taraf eşit sayıda/aralıkta kart içerdiği için
+ * türetilen merkez satırın tam ortasıdır, bu yüzden `justify-center` ile
+ * kendiliğinden doğru yere oturur.
+ */
 import Link from "next/link";
-import { Trophy } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { teamInfoFrom, type MatchCardTeamInfo } from "@/components/MatchCard";
 import { TeamLogo } from "@/components/TeamBadge";
+import { BracketConnectors, type BracketPath } from "@/components/site/BracketConnectors";
 import { BracketMatchCard } from "@/components/site/BracketMatchCard";
+import { TrophyScene } from "@/components/site/TrophyScene";
+import { useBracketGeometry } from "@/components/site/useBracketGeometry";
 import {
-  bracketPositionOf, determineMatchWinner, type BracketCell, type BracketSide,
-  type BracketSideData, type KnockoutBracketData,
+  bracketPositionOf, determineMatchWinner, feederPlaceholders, globalMatchNumber,
+  type BracketCell, type BracketSide, type BracketSideData, type KnockoutBracketData,
 } from "@/lib/bracket";
+import { officialScheduleFor } from "@/lib/bracket-schedule";
 import { KNOCKOUT_ROUND_LABELS } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import type { Match, PublicTeam } from "@/lib/types";
@@ -28,334 +55,470 @@ export interface KnockoutBracketProps {
   ctaLabel?: string;
 }
 
-function resolveTeam(teamId: string | null, teamsById: Map<string, PublicTeam>): MatchCardTeamInfo | null {
-  if (!teamId) return null;
-  return teamInfoFrom(teamsById.get(teamId));
-}
+// ---------------------------------------------------------------------------
+// Sabit node kimlikleri (stabil referanslar — useBracketGeometry'nin efekt
+// bağımlılıklarından bilinçli olarak çıkarılmıştır, bkz. o dosyadaki not)
+// ---------------------------------------------------------------------------
+
+const LEFT_R16_IDS = ["l16-0", "l16-1", "l16-2", "l16-3"] as const;
+const LEFT_QF_IDS = ["lqf-0", "lqf-1"] as const;
+const LEFT_SF_ID = "lsf";
+const RIGHT_R16_IDS = ["r16-0", "r16-1", "r16-2", "r16-3"] as const;
+const RIGHT_QF_IDS = ["rqf-0", "rqf-1"] as const;
+const RIGHT_SF_ID = "rsf";
+
+const FINAL_HEADER = { title: "FİNAL", subtitle: "1.'LİK-2.'LİK MAÇI" };
+const THIRD_HEADER = { title: "3.'LÜK-4.'LÜK MAÇI", subtitle: "YARI FİNAL MAĞLUPLARI" };
+
+// ---------------------------------------------------------------------------
+// Veri çözümleme: bracket.left / bracket.right -> resmi numaralı kart listeleri
+// ---------------------------------------------------------------------------
 
 interface ResolvedCard {
   match: Match | null;
   home: MatchCardTeamInfo | null;
   away: MatchCardTeamInfo | null;
+  homePlaceholder?: string;
+  awayPlaceholder?: string;
   roundLabel: string;
   matchNumber: number;
+  nodeId: string;
+  advanceToMatchNumber: number | null;
+  loserAdvanceToMatchNumber: number | null;
+  fallbackDate: string | null;
+  fallbackTime: string | null;
 }
 
-function resolveCell(
+function resolveTeam(teamId: string | null, teamsById: Map<string, PublicTeam>): MatchCardTeamInfo | null {
+  if (!teamId) return null;
+  return teamInfoFrom(teamsById.get(teamId));
+}
+
+function cardFromCell(
   cell: BracketCell,
-  round: "round_of_16" | "quarter_final" | "semi_final",
-  side: BracketSide,
+  matchNumber: number,
+  nodeId: string,
+  roundLabel: string,
+  advanceToMatchNumber: number | null,
+  loserAdvanceToMatchNumber: number | null,
+  placeholder: { home: string; away: string } | null,
   teamsById: Map<string, PublicTeam>
 ): ResolvedCard {
+  const sched = officialScheduleFor(matchNumber);
   return {
     match: cell.match,
     home: cell.match ? resolveTeam(cell.match.home_team_id, teamsById) : null,
     away: cell.match ? resolveTeam(cell.match.away_team_id, teamsById) : null,
-    roundLabel: KNOCKOUT_ROUND_LABELS[round],
-    matchNumber: cell.match?.bracket_position ?? bracketPositionOf(round, side, cell.slot),
+    homePlaceholder: placeholder?.home,
+    awayPlaceholder: placeholder?.away,
+    roundLabel,
+    matchNumber,
+    nodeId,
+    advanceToMatchNumber,
+    loserAdvanceToMatchNumber,
+    fallbackDate: sched?.date ?? null,
+    fallbackTime: sched?.time ?? null,
   };
 }
 
-function Card({
-  card, variant, isFinal, venueNamesById, justUpdatedIds, className,
+function buildSideCards(
+  sideData: BracketSideData,
+  side: BracketSide,
+  r16Ids: readonly string[],
+  qfIds: readonly string[],
+  sfId: string,
+  teamsById: Map<string, PublicTeam>
+): { r16: ResolvedCard[]; qf: ResolvedCard[]; sf: ResolvedCard } {
+  const r16 = sideData.roundOf16.map((cell, slot) => {
+    const num = globalMatchNumber("round_of_16", bracketPositionOf("round_of_16", side, slot));
+    const targetQFPos = bracketPositionOf("quarter_final", side, Math.floor(slot / 2));
+    return cardFromCell(
+      cell, num, r16Ids[slot], KNOCKOUT_ROUND_LABELS.round_of_16,
+      globalMatchNumber("quarter_final", targetQFPos), null, null, teamsById
+    );
+  });
+
+  const qf = sideData.quarterFinals.map((cell, slot) => {
+    const position = bracketPositionOf("quarter_final", side, slot);
+    const num = globalMatchNumber("quarter_final", position);
+    const sfPos = bracketPositionOf("semi_final", side, 0);
+    return cardFromCell(
+      cell, num, qfIds[slot], KNOCKOUT_ROUND_LABELS.quarter_final,
+      globalMatchNumber("semi_final", sfPos), null, feederPlaceholders("quarter_final", position), teamsById
+    );
+  });
+
+  const sfPosition = bracketPositionOf("semi_final", side, 0);
+  const sfNum = globalMatchNumber("semi_final", sfPosition);
+  const sf = cardFromCell(
+    sideData.semiFinal, sfNum, sfId, KNOCKOUT_ROUND_LABELS.semi_final,
+    16, 15, feederPlaceholders("semi_final", sfPosition), teamsById
+  );
+
+  return { r16, qf, sf };
+}
+
+function buildResolvedCards(bracket: KnockoutBracketData, teamsById: Map<string, PublicTeam>) {
+  const left = buildSideCards(bracket.left, "left", LEFT_R16_IDS, LEFT_QF_IDS, LEFT_SF_ID, teamsById);
+  const right = buildSideCards(bracket.right, "right", RIGHT_R16_IDS, RIGHT_QF_IDS, RIGHT_SF_ID, teamsById);
+
+  const finalCard = cardFromCell(
+    bracket.final, 16, "final", KNOCKOUT_ROUND_LABELS.final,
+    null, null, feederPlaceholders("final", 1), teamsById
+  );
+  const thirdCard = cardFromCell(
+    bracket.thirdPlace, 15, "third", KNOCKOUT_ROUND_LABELS.third_place,
+    null, null, feederPlaceholders("third_place", 1), teamsById
+  );
+
+  const activeMap: Record<string, boolean> = {};
+  for (const c of [...left.r16, ...left.qf, left.sf, ...right.r16, ...right.qf, right.sf]) {
+    activeMap[c.nodeId] = c.match ? determineMatchWinner(c.match) !== null : false;
+  }
+
+  return { left, right, finalCard, thirdCard, activeMap };
+}
+
+// ---------------------------------------------------------------------------
+// Olası ilerleme yolu (hover/tıklama vurgusu) — sabit ağaç yapısından türetilir
+// ---------------------------------------------------------------------------
+
+const FORWARD_CHAIN: Record<string, string[]> = {
+  "l16-0": ["lqf-0", "lsf", "final"], "l16-1": ["lqf-0", "lsf", "final"],
+  "l16-2": ["lqf-1", "lsf", "final"], "l16-3": ["lqf-1", "lsf", "final"],
+  "lqf-0": ["lsf", "final"], "lqf-1": ["lsf", "final"],
+  lsf: ["final"],
+  "r16-0": ["rqf-0", "rsf", "final"], "r16-1": ["rqf-0", "rsf", "final"],
+  "r16-2": ["rqf-1", "rsf", "final"], "r16-3": ["rqf-1", "rsf", "final"],
+  "rqf-0": ["rsf", "final"], "rqf-1": ["rsf", "final"],
+  rsf: ["final"],
+  final: [], third: [],
+};
+
+function highlightSetFor(nodeId: string | null): { nodes: Set<string>; segments: Set<string> } {
+  if (!nodeId) return { nodes: new Set(), segments: new Set() };
+  const chain = FORWARD_CHAIN[nodeId] ?? [];
+  const nodes = new Set([nodeId, ...chain]);
+  const segments = new Set<string>();
+  let prev = nodeId;
+  for (const next of chain) {
+    segments.add(`${prev}-${next}`);
+    prev = next;
+  }
+  return { nodes, segments };
+}
+
+/** Maç saati geldiğinde CANLI rozetinin otomatik belirmesi için periyodik yeniden render. */
+function useTick(intervalMs: number) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((t) => t + 1), intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+}
+
+// ---------------------------------------------------------------------------
+// Ortak bracket yerleşimi (masaüstü + mobil, tek kod yolu)
+// ---------------------------------------------------------------------------
+
+function CardSlot({
+  card, variant, venueNamesById, justUpdatedIds, registerNode, isFinal, isThirdPlace,
+  style, delayMs, hovered, onHoverChange,
 }: {
   card: ResolvedCard;
   variant: BracketVariant;
-  isFinal?: boolean;
   venueNamesById?: Map<string, string>;
   justUpdatedIds?: Set<string>;
-  className?: string;
+  registerNode: (id: string, el: HTMLElement | null) => void;
+  isFinal?: boolean;
+  isThirdPlace?: boolean;
+  style?: CSSProperties;
+  delayMs?: number;
+  hovered: boolean;
+  onHoverChange: (nodeId: string, hovering: boolean) => void;
 }) {
   return (
-    <BracketMatchCard
-      match={card.match}
-      home={card.home}
-      away={card.away}
-      roundLabel={card.roundLabel}
-      matchNumber={card.matchNumber}
-      venueName={card.match?.venue_id ? venueNamesById?.get(card.match.venue_id) : null}
-      variant={variant}
-      isFinal={isFinal}
-      justUpdated={!!card.match && !!justUpdatedIds?.has(card.match.id)}
-      className={className}
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Masaüstü: sabit CSS Grid, kesik çizgili bağlantılar (JS ölçüm yok)
-// ---------------------------------------------------------------------------
-
-/** İki maçı tek bir sonraki maça bağlayan kesik çizgi (grid hücresi kadar esner). */
-function PairConnector({ mirrored = false }: { mirrored?: boolean }) {
-  return (
-    <div className={cn("relative h-full w-full", mirrored && "scale-x-[-1]")} aria-hidden="true">
-      <div className="absolute left-0 top-1/4 h-0 w-1/2 border-t-2 border-dashed border-gray-300" />
-      <div className="absolute bottom-1/4 left-0 h-0 w-1/2 border-t-2 border-dashed border-gray-300" />
-      <div className="absolute bottom-1/4 left-1/2 top-1/4 h-auto w-0 border-l-2 border-dashed border-gray-300" />
-      <div className="absolute left-1/2 top-1/2 h-0 w-1/2 border-t-2 border-dashed border-gray-300" />
+    <div
+      className="ky-enter relative z-[3] w-full"
+      style={{ ...style, animationDelay: delayMs !== undefined ? `${delayMs}ms` : undefined }}
+    >
+      <BracketMatchCard
+        match={card.match}
+        home={card.home}
+        away={card.away}
+        homePlaceholder={card.homePlaceholder}
+        awayPlaceholder={card.awayPlaceholder}
+        roundLabel={card.roundLabel}
+        matchNumber={card.matchNumber}
+        headerOverride={isFinal ? FINAL_HEADER : isThirdPlace ? THIRD_HEADER : undefined}
+        venueName={card.match?.venue_id ? venueNamesById?.get(card.match.venue_id) : null}
+        variant={variant}
+        isFinal={isFinal}
+        isThirdPlace={isThirdPlace}
+        justUpdated={!!card.match && !!justUpdatedIds?.has(card.match.id)}
+        className="h-full"
+        nodeId={card.nodeId}
+        registerNode={registerNode}
+        advanceToMatchNumber={card.advanceToMatchNumber}
+        loserAdvanceToMatchNumber={card.loserAdvanceToMatchNumber}
+        fallbackDate={card.fallbackDate}
+        fallbackTime={card.fallbackTime}
+        pathHighlighted={hovered}
+        onTeamHoverChange={(hovering) => onHoverChange(card.nodeId, hovering)}
+      />
     </div>
   );
 }
 
-/** Yarı Final -> Final gibi tek-tek (1-1) bağlantılar için düz kesik çizgi. */
-function StraightConnector() {
-  return (
-    <div className="relative h-full w-full" aria-hidden="true">
-      <div className="absolute left-0 top-1/2 h-0 w-full border-t-2 border-dashed border-gray-300" />
-    </div>
-  );
+interface SideCards {
+  r16: ResolvedCard[];
+  qf: ResolvedCard[];
+  sf: ResolvedCard;
 }
 
-const DESKTOP_ROW_TEMPLATE = "repeat(4, minmax(112px, 1fr))";
-
-/** Kart/bağlantı genişlikleri: yazılar hiçbir takım adında sıkışmasın diye
- * geniş tutulur (bkz. determineMatchWinner altındaki kartlarda kelime içi
- * bölünme sorunu — dar sütunlarda "Yığılcaspor" gibi tek kelimelik isimler
- * ortadan bölünüyordu). */
-function cardSizes(variant: BracketVariant) {
-  return variant === "full"
-    ? { card: "minmax(232px, 1fr)", finalCard: "minmax(272px, 1.1fr)", conn: "40px" }
-    : { card: "minmax(212px, 1fr)", finalCard: "minmax(244px, 1fr)", conn: "30px" };
-}
-
-function desktopColumnTemplate(variant: BracketVariant): string {
-  const { card, finalCard, conn } = cardSizes(variant);
-  return [card, conn, card, conn, card, conn, finalCard, conn, card, conn, card, conn, card].join(" ");
-}
-
-function resolveFinal(bracket: KnockoutBracketData, teamsById: Map<string, PublicTeam>): ResolvedCard {
-  const match = bracket.final.match;
-  return {
-    match,
-    home: match ? resolveTeam(match.home_team_id, teamsById) : null,
-    away: match ? resolveTeam(match.away_team_id, teamsById) : null,
-    roundLabel: KNOCKOUT_ROUND_LABELS.final,
-    matchNumber: 1,
-  };
-}
-
-function championOf(card: ResolvedCard): MatchCardTeamInfo | null {
-  if (!card.match) return null;
-  const winnerSlot = determineMatchWinner(card.match);
-  if (!winnerSlot) return null;
-  return winnerSlot === "home" ? card.home : card.away;
-}
-
-function DesktopSide({
-  side, sideData, variant, venueNamesById, justUpdatedIds, teamsById, mirrored,
+function BracketFlow({
+  left, right, finalCard, thirdCard, activeMap, variant, venueNamesById, justUpdatedIds,
+  highlightedNodes, highlightedSegments, onHoverChange,
 }: {
-  side: BracketSide;
-  sideData: BracketSideData;
+  left: SideCards;
+  right: SideCards;
+  finalCard: ResolvedCard;
+  thirdCard: ResolvedCard;
+  activeMap: Record<string, boolean>;
   variant: BracketVariant;
   venueNamesById?: Map<string, string>;
   justUpdatedIds?: Set<string>;
-  teamsById: Map<string, PublicTeam>;
-  mirrored: boolean;
+  highlightedNodes: Set<string>;
+  highlightedSegments: Set<string>;
+  onHoverChange: (nodeId: string, hovering: boolean) => void;
 }) {
-  const r16 = sideData.roundOf16.map((c) => resolveCell(c, "round_of_16", side, teamsById));
-  const qf = sideData.quarterFinals.map((c) => resolveCell(c, "quarter_final", side, teamsById));
-  const sf = resolveCell(sideData.semiFinal, "semi_final", side, teamsById);
+  const isFull = variant === "full";
+  const containerRef = useRef<HTMLDivElement>(null);
+  const nodesRef = useRef(new Map<string, HTMLElement>());
+  const registerNode = useCallback((id: string, el: HTMLElement | null) => {
+    if (el) nodesRef.current.set(id, el);
+    else nodesRef.current.delete(id);
+  }, []);
 
-  const rowGap = variant === "full" ? "6px" : "4px";
+  const geometry = useBracketGeometry({
+    containerRef, nodesRef, activeMap,
+    leftR16Ids: LEFT_R16_IDS, leftQFIds: LEFT_QF_IDS, leftSFId: LEFT_SF_ID,
+    rightR16Ids: RIGHT_R16_IDS, rightQFIds: RIGHT_QF_IDS, rightSFId: RIGHT_SF_ID,
+  });
 
-  // Sol taraf sütun sırası: R16, conn, QF, conn, SF (dışarıdan içeri, merkeze doğru).
-  // Sağ taraf yalnızca YERLEŞİM olarak aynalanır: SF, conn, QF, conn, R16.
-  // Yazılar/skorlar/takım isimleri ASLA çevrilmez; yalnızca kartların dizilim sırası değişir.
-  const r16Order = mirrored ? [...r16].reverse() : r16;
-  const qfOrder = mirrored ? [...qf].reverse() : qf;
+  // Yatay kaydırma gerekiyorsa açılışta bracket'ın merkezini (final + kupa)
+  // gösterir — hem masaüstünde hem mobilde sol kenardan başlamaz.
+  const centered = useRef(false);
+  useEffect(() => {
+    if (!geometry.ready || centered.current) return;
+    const el = containerRef.current;
+    if (!el) return;
+    el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2;
+    centered.current = true;
+  }, [geometry.ready]);
 
-  return (
-    <div
-      className="grid"
-      style={{ gridTemplateColumns: sideColTemplate(variant), gridTemplateRows: DESKTOP_ROW_TEMPLATE, columnGap: 0, rowGap }}
-    >
-      {!mirrored && (
-        <>
-          {r16Order.map((c, i) => (
-            <div key={`r16-${i}`} style={{ gridColumn: 1, gridRow: i + 1 }}>
-              <Card card={c} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} className="h-full" />
-            </div>
-          ))}
-          <div style={{ gridColumn: 2, gridRow: "1 / span 2" }}><PairConnector /></div>
-          <div style={{ gridColumn: 2, gridRow: "3 / span 2" }}><PairConnector /></div>
-          {qfOrder.map((c, i) => (
-            <div key={`qf-${i}`} style={{ gridColumn: 3, gridRow: `${i * 2 + 1} / span 2` }}>
-              <Card card={c} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} className="h-full" />
-            </div>
-          ))}
-          <div style={{ gridColumn: 4, gridRow: "1 / span 4" }}><PairConnector /></div>
-          <div style={{ gridColumn: 5, gridRow: "1 / span 4" }}>
-            <Card card={sf} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} className="h-full" />
-          </div>
-        </>
-      )}
-      {mirrored && (
-        <>
-          <div style={{ gridColumn: 1, gridRow: "1 / span 4" }}>
-            <Card card={sf} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} className="h-full" />
-          </div>
-          <div style={{ gridColumn: 2, gridRow: "1 / span 4" }}><PairConnector mirrored /></div>
-          {qfOrder.map((c, i) => (
-            <div key={`qf-${i}`} style={{ gridColumn: 3, gridRow: `${i * 2 + 1} / span 2` }}>
-              <Card card={c} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} className="h-full" />
-            </div>
-          ))}
-          <div style={{ gridColumn: 4, gridRow: "1 / span 2" }}><PairConnector mirrored /></div>
-          <div style={{ gridColumn: 4, gridRow: "3 / span 2" }}><PairConnector mirrored /></div>
-          {r16Order.map((c, i) => (
-            <div key={`r16-${i}`} style={{ gridColumn: 5, gridRow: i + 1 }}>
-              <Card card={c} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} className="h-full" />
-            </div>
-          ))}
-        </>
-      )}
-    </div>
-  );
-}
+  const paths: BracketPath[] = geometry.paths.map((p) => ({ ...p, highlighted: highlightedSegments.has(p.key) }));
 
-function sideColTemplate(variant: BracketVariant): string {
-  const { card, conn } = cardSizes(variant);
-  return [card, conn, card, conn, card].join(" ");
-}
+  // Kart genişlikleri yalnızca ölçek olarak küçülür; yerleşim her ekranda aynıdır.
+  const sideCol = isFull
+    ? "w-[188px] shrink-0 sm:w-[210px] lg:w-[232px]"
+    : "w-[168px] shrink-0 sm:w-[184px] lg:w-[200px]";
+  const centerCol = isFull
+    ? "w-[228px] shrink-0 sm:w-[262px] lg:w-[300px]"
+    : "w-[196px] shrink-0 sm:w-[220px] lg:w-[248px]";
+  const rowGap = isFull ? "gap-7 sm:gap-10 lg:gap-[60px]" : "gap-5 sm:gap-7 lg:gap-9";
 
-function DesktopBracket({
-  bracket, teamsById, venueNamesById, variant, justUpdatedIds, championTitle,
-}: Required<Pick<KnockoutBracketProps, "bracket" | "teamsById" | "variant">> &
-  Pick<KnockoutBracketProps, "venueNamesById" | "justUpdatedIds" | "championTitle">) {
-  const finalCard = resolveFinal(bracket, teamsById);
-  const champion = championOf(finalCard);
+  const positionedStyle = (nodeId: string): CSSProperties => ({
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: geometry.tops[nodeId] ?? 0,
+    visibility: geometry.ready ? "visible" : "hidden",
+  });
 
-  const headerLabels = [
-    "SON 16", "", "ÇEYREK FİNAL", "", "YARI FİNAL", "", "FİNAL", "", "YARI FİNAL", "", "ÇEYREK FİNAL", "", "SON 16",
+  const headerLabels: { label: string; className: string }[] = [
+    { label: "SOL SON 16", className: sideCol },
+    { label: "SOL ÇEYREK FİNAL", className: sideCol },
+    { label: "SOL YARI FİNAL", className: sideCol },
+    { label: "FİNAL", className: centerCol },
+    { label: "SAĞ YARI FİNAL", className: sideCol },
+    { label: "SAĞ ÇEYREK FİNAL", className: sideCol },
+    { label: "SAĞ SON 16", className: sideCol },
   ];
 
   return (
-    <div className="hidden overflow-x-auto lg:block">
-      <div className={variant === "full" ? "min-w-[1900px]" : "min-w-[1700px]"}>
-        {variant === "full" && (
-          <div className="grid pb-2" style={{ gridTemplateColumns: desktopColumnTemplate(variant), columnGap: 0 }}>
-            {headerLabels.map((label, i) => (
-              <p key={i} className="text-center text-xs font-bold tracking-wide text-muted">{label}</p>
-            ))}
+    <div className="relative">
+      <div
+        ref={containerRef}
+        className="relative overflow-x-auto overscroll-x-contain pb-2 [scrollbar-width:thin]"
+      >
+        <div className="w-max">
+          {isFull && (
+            <div className={cn("flex pb-2", rowGap)}>
+              {headerLabels.map((h) => (
+                <p key={h.label} className={cn("text-center text-[10px] font-bold tracking-[0.12em] text-[var(--ky-accent-light)] sm:text-xs", h.className)}>
+                  {h.label}
+                </p>
+              ))}
+            </div>
+          )}
+          <div className={cn("flex items-stretch", rowGap)}>
+            <div className={cn("flex flex-col justify-between gap-3 lg:gap-[18px]", sideCol)}>
+              {left.r16.map((c, i) => (
+                <CardSlot key={c.nodeId} card={c} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} registerNode={registerNode} delayMs={70 + i * 35} hovered={highlightedNodes.has(c.nodeId)} onHoverChange={onHoverChange} />
+              ))}
+            </div>
+            <div className={cn("relative", sideCol)}>
+              {left.qf.map((c, i) => (
+                <CardSlot key={c.nodeId} card={c} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} registerNode={registerNode} style={positionedStyle(c.nodeId)} delayMs={420 + i * 60} hovered={highlightedNodes.has(c.nodeId)} onHoverChange={onHoverChange} />
+              ))}
+            </div>
+            <div className={cn("relative", sideCol)}>
+              <CardSlot card={left.sf} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} registerNode={registerNode} style={positionedStyle(left.sf.nodeId)} delayMs={640} hovered={highlightedNodes.has(left.sf.nodeId)} onHoverChange={onHoverChange} />
+            </div>
+
+            {/* Merkez: kupa + final + üçüncülük. JS ile konumlandırılmaz —
+                her iki taraf simetrik olduğu için flex ortalama tam olarak
+                bağlantıların birleştiği noktaya denk gelir. */}
+            <div className={cn("flex flex-col items-center justify-center gap-4 lg:gap-5", centerCol)}>
+              <div className="ky-enter relative z-[2]" style={{ animationDelay: "760ms" }}>
+                <TrophyScene compact={!isFull} />
+              </div>
+              <CardSlot card={finalCard} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} registerNode={registerNode} isFinal delayMs={900} hovered={highlightedNodes.has("final")} onHoverChange={onHoverChange} />
+              <CardSlot card={thirdCard} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} registerNode={registerNode} isThirdPlace delayMs={940} hovered={highlightedNodes.has("third")} onHoverChange={onHoverChange} />
+            </div>
+
+            <div className={cn("relative", sideCol)}>
+              <CardSlot card={right.sf} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} registerNode={registerNode} style={positionedStyle(right.sf.nodeId)} delayMs={640} hovered={highlightedNodes.has(right.sf.nodeId)} onHoverChange={onHoverChange} />
+            </div>
+            <div className={cn("relative", sideCol)}>
+              {right.qf.map((c, i) => (
+                <CardSlot key={c.nodeId} card={c} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} registerNode={registerNode} style={positionedStyle(c.nodeId)} delayMs={420 + i * 60} hovered={highlightedNodes.has(c.nodeId)} onHoverChange={onHoverChange} />
+              ))}
+            </div>
+            <div className={cn("flex flex-col justify-between gap-3 lg:gap-[18px]", sideCol)}>
+              {right.r16.map((c, i) => (
+                <CardSlot key={c.nodeId} card={c} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} registerNode={registerNode} delayMs={70 + i * 35} hovered={highlightedNodes.has(c.nodeId)} onHoverChange={onHoverChange} />
+              ))}
+            </div>
           </div>
-        )}
-        <div className="grid items-stretch" style={{ gridTemplateColumns: desktopColumnTemplate(variant), gridTemplateRows: DESKTOP_ROW_TEMPLATE, columnGap: 0 }}>
-          <div style={{ gridColumn: "1 / span 5", gridRow: "1 / span 4" }}>
-            <DesktopSide side="left" sideData={bracket.left} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} teamsById={teamsById} mirrored={false} />
-          </div>
-          <div style={{ gridColumn: 6, gridRow: "1 / span 4" }}><StraightConnector /></div>
-          <div style={{ gridColumn: 7, gridRow: "1 / span 4" }}>
-            <Card card={finalCard} variant={variant} isFinal venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} className="h-full" />
-          </div>
-          <div style={{ gridColumn: 8, gridRow: "1 / span 4" }}><StraightConnector /></div>
-          <div style={{ gridColumn: "9 / span 5", gridRow: "1 / span 4" }}>
-            <DesktopSide side="right" sideData={bracket.right} variant={variant} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} teamsById={teamsById} mirrored />
-          </div>
+          <BracketConnectors width={geometry.width} height={geometry.height} paths={paths} drawn={geometry.drawn} />
         </div>
       </div>
-      {champion && variant === "full" && <ChampionBanner team={champion} title={championTitle} />}
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-[var(--ky-bg-1)] to-transparent sm:w-8" aria-hidden />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-[var(--ky-bg-1)] to-transparent sm:w-8" aria-hidden />
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Mobil: sol yol / sağ yol / final, dikey basit bağlantılar
+// Şampiyon alanı ve arka plan efektleri
 // ---------------------------------------------------------------------------
 
-function MobileRoundGroup({
-  label, cells, round, side, variant, teamsById, venueNamesById, justUpdatedIds,
-}: {
-  label: string;
-  cells: BracketCell[];
-  round: "round_of_16" | "quarter_final" | "semi_final";
-  side: BracketSide;
-  variant: BracketVariant;
-  teamsById: Map<string, PublicTeam>;
-  venueNamesById?: Map<string, string>;
-  justUpdatedIds?: Set<string>;
-}) {
+function ChampionReveal({ team, title }: { team: MatchCardTeamInfo; title: string }) {
   return (
-    <div>
-      <h4 className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted">{label}</h4>
-      <div className="space-y-1.5">
-        {cells.map((cell) => (
-          <Card
-            key={cell.slot}
-            card={resolveCell(cell, round, side, teamsById)}
-            variant={variant}
-            venueNamesById={venueNamesById}
-            justUpdatedIds={justUpdatedIds}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function MobileConnector() {
-  return (
-    <div className="flex items-center justify-center gap-2 py-1" aria-hidden="true">
-      <span className="h-4 w-px border-l-2 border-dashed border-gray-300" />
-      <span className="text-[10px] font-medium text-muted">Kazananlar ilerler</span>
-      <span className="h-4 w-px border-l-2 border-dashed border-gray-300" />
-    </div>
-  );
-}
-
-function MobileSide({
-  side, sideData, label, variant, teamsById, venueNamesById, justUpdatedIds,
-}: {
-  side: BracketSide;
-  sideData: BracketSideData;
-  label: string;
-  variant: BracketVariant;
-  teamsById: Map<string, PublicTeam>;
-  venueNamesById?: Map<string, string>;
-  justUpdatedIds?: Set<string>;
-}) {
-  return (
-    <section aria-label={label} className="rounded-2xl border border-line bg-gray-50/50 p-3">
-      <h3 className="mb-2 text-sm font-bold text-ink">{label}</h3>
-      <MobileRoundGroup label="Son 16" cells={sideData.roundOf16} round="round_of_16" side={side} variant={variant} teamsById={teamsById} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} />
-      <MobileConnector />
-      <MobileRoundGroup label="Çeyrek Final" cells={sideData.quarterFinals} round="quarter_final" side={side} variant={variant} teamsById={teamsById} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} />
-      <MobileConnector />
-      <MobileRoundGroup label="Yarı Final" cells={[sideData.semiFinal]} round="semi_final" side={side} variant={variant} teamsById={teamsById} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} />
-    </section>
-  );
-}
-
-function MobileBracket({ bracket, teamsById, venueNamesById, variant, justUpdatedIds, championTitle }: Required<Pick<KnockoutBracketProps, "bracket" | "teamsById" | "variant">> & Pick<KnockoutBracketProps, "venueNamesById" | "justUpdatedIds" | "championTitle">) {
-  const finalCard = resolveFinal(bracket, teamsById);
-  const champion = championOf(finalCard);
-
-  return (
-    <div className="space-y-3 lg:hidden">
-      <MobileSide side="left" sideData={bracket.left} label="Sol Eleme Yolu" variant={variant} teamsById={teamsById} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} />
-      <MobileSide side="right" sideData={bracket.right} label="Sağ Eleme Yolu" variant={variant} teamsById={teamsById} venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} />
-      <section aria-label="Final" className="rounded-2xl border-2 border-brand-600 bg-brand-50/30 p-3">
-        <h3 className="mb-2 text-sm font-bold text-ink">Final</h3>
-        <Card card={finalCard} variant={variant} isFinal venueNamesById={venueNamesById} justUpdatedIds={justUpdatedIds} />
-        {champion && <ChampionBanner team={champion} title={championTitle} />}
-      </section>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Şampiyon alanı
-// ---------------------------------------------------------------------------
-
-function ChampionBanner({ team, title = "Şampiyon" }: { team: MatchCardTeamInfo; title?: string }) {
-  return (
-    <div className="mx-auto mt-4 flex max-w-xs flex-col items-center gap-2 rounded-2xl border-2 border-brand-600 bg-brand-50 px-6 py-4 text-center shadow-[0_2px_8px_rgba(21,128,61,0.12)]">
-      <Trophy className="size-7 text-brand-700" aria-hidden />
-      <p className="text-xs font-bold uppercase tracking-wide text-brand-700">{title}</p>
+    <div
+      className="ky-enter relative z-[3] mx-auto flex max-w-xs flex-col items-center gap-2 rounded-2xl border border-[var(--ky-gold)]/60 bg-[rgba(19,57,52,0.98)] px-6 py-5 text-center shadow-[0_14px_34px_rgba(0,0,0,0.25),0_0_24px_rgba(242,202,100,0.12)]"
+      style={{ animationDelay: "1050ms" }}
+    >
+      <TrophyIcon />
+      <p className="text-xs font-bold uppercase tracking-[0.16em] text-[var(--ky-gold)]">{title}</p>
       <div className="flex items-center gap-2">
-        <TeamLogo logoUrl={team.logo_url} name={team.name} color={team.primary_color} code={team.code} size={36} />
-        <span className="text-lg font-bold text-ink">{team.name}</span>
+        <TeamLogo logoUrl={team.logo_url} name={team.name} color={team.primary_color} code={team.code} size={40} />
+        <span className="text-lg font-bold text-[var(--ky-text)]">{team.name}</span>
       </div>
+    </div>
+  );
+}
+
+function TrophyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-7 text-[var(--ky-gold)]" fill="currentColor" aria-hidden>
+      <path d="M7 3h10v2h3a1 1 0 0 1 1 1v1a4 4 0 0 1-4 4h-.26A6.002 6.002 0 0 1 13 14.9V17h3v2H8v-2h3v-2.1A6.002 6.002 0 0 1 7.26 11H7a4 4 0 0 1-4-4V6a1 1 0 0 1 1-1h3V3Zm0 4H5a2 2 0 0 0 2 2V7Zm10 0v2a2 2 0 0 0 2-2h-2Z" />
+    </svg>
+  );
+}
+
+const PARTICLES = [
+  { top: "12%", left: "8%", size: 3, delay: "0s" },
+  { top: "22%", left: "40%", size: 2, delay: "1.2s" },
+  { top: "68%", left: "16%", size: 2.5, delay: "2.4s" },
+  { top: "80%", left: "58%", size: 3, delay: "0.6s" },
+  { top: "34%", left: "78%", size: 2, delay: "1.8s" },
+  { top: "55%", left: "92%", size: 2.5, delay: "3s" },
+  { top: "8%", left: "68%", size: 2, delay: "2.1s" },
+  { top: "90%", left: "30%", size: 2, delay: "0.9s" },
+];
+
+function BackgroundEffects() {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden" aria-hidden="true">
+      <div className="absolute -left-1/4 -top-1/3 size-[60%] rounded-full bg-[radial-gradient(circle,rgba(51,230,175,0.18),transparent_70%)] blur-2xl" />
+      <div className="absolute -right-1/4 bottom-0 size-[55%] rounded-full bg-[radial-gradient(circle,rgba(54,220,212,0.16),transparent_70%)] blur-2xl" />
+      <div
+        className="absolute inset-0 opacity-[0.06]"
+        style={{
+          backgroundImage:
+            "linear-gradient(rgba(255,255,255,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.4) 1px, transparent 1px)",
+          backgroundSize: "42px 42px",
+        }}
+      />
+      {PARTICLES.map((p, i) => (
+        <span
+          key={i}
+          className="ky-particle absolute rounded-full bg-[var(--ky-accent-light)]"
+          style={{ top: p.top, left: p.left, width: p.size, height: p.size, animationDelay: p.delay }}
+        />
+      ))}
+      <div className="absolute inset-0 [box-shadow:inset_0_0_120px_40px_rgba(8,29,27,0.75)]" />
+    </div>
+  );
+}
+
+function HeaderBlock({
+  title, description, ctaHref, ctaLabel, isFull,
+}: {
+  title?: string;
+  description?: string;
+  ctaHref?: string;
+  ctaLabel?: string;
+  isFull: boolean;
+}) {
+  if (!title && !description && !ctaHref) return null;
+  if (!isFull) {
+    return (
+      <div className="ky-enter relative z-[3] flex flex-wrap items-end justify-between gap-3">
+        <div>
+          {title && <h2 className="text-base font-extrabold text-[var(--ky-text)]">{title}</h2>}
+          {description && <p className="mt-0.5 text-xs text-[var(--ky-text-2)]">{description}</p>}
+        </div>
+        {ctaHref && (
+          <Link
+            href={ctaHref}
+            className="shrink-0 rounded-full border border-[var(--ky-border)] bg-white/5 px-3 py-1.5 text-xs font-bold text-[var(--ky-text)] transition-colors hover:bg-white/10"
+          >
+            {ctaLabel ?? "Tüm Eleme Ağacını Gör"}
+          </Link>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="ky-enter relative z-[3] flex flex-col items-center gap-1.5 px-2 text-center">
+      {title && (
+        <h2 className="text-2xl font-extrabold uppercase tracking-[0.08em] text-[var(--ky-text)] sm:text-3xl lg:text-4xl">{title}</h2>
+      )}
+      {description && (
+        <p className="text-xs font-bold uppercase tracking-wide text-[var(--ky-accent-light)] sm:text-sm lg:text-base">{description}</p>
+      )}
+      {ctaHref && (
+        <Link
+          href={ctaHref}
+          className="mt-1 inline-flex items-center gap-1 rounded-full border border-[var(--ky-border)] bg-white/5 px-4 py-2 text-xs font-bold text-[var(--ky-text)] transition-colors hover:bg-white/10"
+        >
+          {ctaLabel ?? "Tüm Eleme Ağacını Gör"}
+        </Link>
+      )}
     </div>
   );
 }
@@ -368,23 +531,72 @@ export function KnockoutBracket({
   bracket, teamsById, venueNamesById, variant, championTitle, justUpdatedIds,
   title, description, ctaHref, ctaLabel,
 }: KnockoutBracketProps) {
+  useTick(20_000);
+
+  const { left, right, finalCard, thirdCard, activeMap } = useMemo(
+    () => buildResolvedCards(bracket, teamsById),
+    [bracket, teamsById]
+  );
+
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const handleHoverChange = useCallback((nodeId: string, hovering: boolean) => {
+    setHoveredNodeId((prev) => {
+      if (hovering) return nodeId;
+      return prev === nodeId ? null : prev;
+    });
+  }, []);
+  const { nodes: highlightedNodes, segments: highlightedSegments } = useMemo(
+    () => highlightSetFor(hoveredNodeId),
+    [hoveredNodeId]
+  );
+
+  const champion = useMemo(() => {
+    const match = finalCard.match;
+    if (!match) return null;
+    const winner = determineMatchWinner(match);
+    if (!winner) return null;
+    return winner === "home" ? finalCard.home : finalCard.away;
+  }, [finalCard]);
+
+  const isFull = variant === "full";
+  const liveCount = useMemo(() => {
+    const all = [...left.r16, ...left.qf, left.sf, ...right.r16, ...right.qf, right.sf, finalCard, thirdCard];
+    const liveStatuses = ["in_progress", "half_time", "second_half", "extra_time", "penalties"];
+    return all.filter((c) => c.match && liveStatuses.includes(c.match.status)).length;
+  }, [left, right, finalCard, thirdCard]);
+
   return (
-    <div className="space-y-4">
-      {(title || description) && (
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            {title && <h2 className="section-title">{title}</h2>}
-            {description && <p className="mt-0.5 text-sm text-muted">{description}</p>}
-          </div>
-          {ctaHref && (
-            <Link href={ctaHref} className="btn-secondary btn-sm shrink-0">
-              {ctaLabel ?? "Tüm Eleme Ağacını Gör"}
-            </Link>
-          )}
-        </div>
-      )}
-      <DesktopBracket bracket={bracket} teamsById={teamsById} venueNamesById={venueNamesById} variant={variant} justUpdatedIds={justUpdatedIds} championTitle={championTitle} />
-      <MobileBracket bracket={bracket} teamsById={teamsById} venueNamesById={venueNamesById} variant={variant} justUpdatedIds={justUpdatedIds} championTitle={championTitle} />
+    <div
+      className={cn("kupa-yolu relative overflow-hidden rounded-[22px]", isFull ? "px-2 py-6 sm:px-4 sm:py-8 lg:px-6 lg:py-9" : "px-2 py-5 sm:px-4")}
+      style={{ background: "radial-gradient(120% 90% at 50% -10%, var(--ky-bg-2), var(--ky-bg-1) 60%)" }}
+    >
+      {isFull && <BackgroundEffects />}
+      <div className="relative z-[3] space-y-5 sm:space-y-6">
+        <HeaderBlock title={title} description={description} ctaHref={ctaHref} ctaLabel={ctaLabel} isFull={isFull} />
+        {isFull && liveCount > 0 && (
+          <p className="ky-enter flex items-center justify-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--ky-live)]">
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-[var(--ky-live)] opacity-75 motion-reduce:animate-none" />
+              <span className="relative inline-flex size-2 rounded-full bg-[var(--ky-live)]" />
+            </span>
+            {liveCount} CANLI MAÇ
+          </p>
+        )}
+        <BracketFlow
+          left={left}
+          right={right}
+          finalCard={finalCard}
+          thirdCard={thirdCard}
+          activeMap={activeMap}
+          variant={variant}
+          venueNamesById={venueNamesById}
+          justUpdatedIds={justUpdatedIds}
+          highlightedNodes={highlightedNodes}
+          highlightedSegments={highlightedSegments}
+          onHoverChange={handleHoverChange}
+        />
+        {champion && <ChampionReveal team={champion} title={championTitle ?? "Şampiyon"} />}
+      </div>
     </div>
   );
 }

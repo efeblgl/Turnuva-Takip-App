@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildKnockoutBracket, determineMatchWinner, otherKnockoutMatches, winnerTeamId } from "./bracket";
+import {
+  buildKnockoutBracket, determineMatchWinner, feederPlaceholders,
+  globalMatchNumber, otherKnockoutMatches, winnerTeamId,
+} from "./bracket";
 import type { Match, MatchStatus } from "./types";
 
 let seq = 0;
@@ -142,6 +145,39 @@ describe("otherKnockoutMatches", () => {
     ];
     expect(otherKnockoutMatches([...bracket, ...others]).map((x) => x.id).sort()).toEqual(["r32", "third"]);
     expect(buildKnockoutBracket([...bracket, ...others]).left.roundOf16[0].match).not.toBeNull();
+  });
+});
+
+describe("thirdPlace", () => {
+  it("üçüncülük maçını ayrı hücrede tutar, otherKnockoutMatches'i etkilemez", () => {
+    const bracket = buildKnockoutBracket([
+      m({ id: "third", knockout_round: "third_place", bracket_position: 1 }),
+    ]);
+    expect(bracket.thirdPlace.match?.id).toBe("third");
+    expect(bracket.hasAnyMatch).toBe(true);
+  });
+});
+
+describe("globalMatchNumber / feederPlaceholders", () => {
+  it("her tur için resmi maç programındaki 1-16 numaralandırmayı üretir", () => {
+    expect(globalMatchNumber("round_of_16", 1)).toBe(1);
+    expect(globalMatchNumber("round_of_16", 8)).toBe(8);
+    expect(globalMatchNumber("quarter_final", 1)).toBe(9);
+    expect(globalMatchNumber("quarter_final", 4)).toBe(12);
+    expect(globalMatchNumber("semi_final", 1)).toBe(13);
+    expect(globalMatchNumber("semi_final", 2)).toBe(14);
+    expect(globalMatchNumber("third_place", 1)).toBe(15);
+    expect(globalMatchNumber("final", 1)).toBe(16);
+  });
+
+  it("çeyrek final yer tutucuları doğru Son 16 maçlarını işaret eder", () => {
+    expect(feederPlaceholders("quarter_final", 1)).toEqual({ home: "Kazanan 1. Maç", away: "Kazanan 2. Maç" });
+    expect(feederPlaceholders("quarter_final", 4)).toEqual({ home: "Kazanan 7. Maç", away: "Kazanan 8. Maç" });
+  });
+
+  it("final ve üçüncülük yer tutucuları yarı final maçlarını işaret eder", () => {
+    expect(feederPlaceholders("final", 1)).toEqual({ home: "13. Maç Galibi", away: "14. Maç Galibi" });
+    expect(feederPlaceholders("third_place", 1)).toEqual({ home: "13. Maç Mağlubu", away: "14. Maç Mağlubu" });
   });
 });
 

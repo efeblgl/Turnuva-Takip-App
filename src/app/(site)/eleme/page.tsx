@@ -50,9 +50,10 @@ export default async function KnockoutPage() {
     );
   }
 
-  // Bu bileşenin kapsamadığı diğer eleme maçları (varsa Son 32 / Üçüncülük);
-  // mevcut sistemde bu turlar da desteklenir, ana ağaçtan gizlenmez.
-  const otherRounds = otherKnockoutMatches(knockoutMatches);
+  // Bu bileşenin kapsamadığı diğer eleme maçları (varsa Son 32); üçüncülük
+  // maçı artık ana Kupa Yolu görünümünün "Final & Diğer Maçlar" sütununda
+  // gösterildiği için burada TEKRAR listelenmez.
+  const otherRounds = otherKnockoutMatches(knockoutMatches).filter((m) => m.knockout_round !== "third_place");
   const otherRoundNames = KNOCKOUT_ROUND_ORDER.filter((r) => otherRounds.some((m) => m.knockout_round === r));
 
   return (
@@ -64,8 +65,8 @@ export default async function KnockoutPage() {
         venueNamesById={venueNamesById}
         variant="full"
         championTitle={championTitleFor(tournament)}
-        title="Eleme Ağacı"
-        description="16 takımın şampiyonluk yolculuğunu ve canlı skorları takip edin."
+        title="Kupa Yolu"
+        description={tournament.name.toLocaleUpperCase("tr")}
       />
 
       {otherRoundNames.length > 0 && (

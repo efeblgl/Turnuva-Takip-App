@@ -161,8 +161,8 @@ export function KnockoutManager({
               bracket={bracket}
               teamsById={teamsById}
               variant="full"
-              title="Bracket Önizleme"
-              description="Sol/sağ yerleşimin doğru kurulduğunu buradan kontrol edebilirsiniz."
+              title="Kupa Yolu Önizleme"
+              description="Halka açık sitede görünecek eleme ağacının önizlemesi."
             />
           </section>
         )}

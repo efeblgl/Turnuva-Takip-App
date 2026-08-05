@@ -14,7 +14,8 @@
  */
 import { logger } from "./logger";
 import { LIVE_STATUSES, MATCH_STATUS_BADGE, MATCH_STATUS_LABELS } from "./labels";
-import type { Match, Tournament } from "./types";
+import { isMatchLiveNow } from "./live";
+import type { KnockoutRound, Match, Tournament } from "./types";
 
 export type BracketSide = "left" | "right";
 
@@ -45,6 +46,8 @@ export interface KnockoutBracketData {
   left: BracketSideData;
   right: BracketSideData;
   final: BracketCell;
+  /** Yarı final kaybedenlerinin oynadığı üçüncülük maçı (varsa). */
+  thirdPlace: BracketCell;
   /** Son 16 - Final arasında en az bir maç kaydı var mı? */
   hasAnyMatch: boolean;
 }
@@ -92,13 +95,27 @@ export function buildKnockoutBracket(matches: Match[]): KnockoutBracketData {
   const left = emptySide();
   const right = emptySide();
   const finalCell: BracketCell = { slot: 0, match: null };
+  const thirdPlaceCell: BracketCell = { slot: 0, match: null };
   const occupied = new Set<string>();
   let hasAnyMatch = false;
   let finalSeen = false;
+  let thirdPlaceSeen = false;
 
   for (const match of matches) {
     if (match.stage !== "knockout") continue;
     const round = match.knockout_round;
+
+    if (round === "third_place") {
+      hasAnyMatch = true;
+      if (thirdPlaceSeen) {
+        logger.warn("bracket", "Birden fazla üçüncülük maçı bulundu, ilki kullanılıyor.", { matchId: match.id });
+        continue;
+      }
+      thirdPlaceSeen = true;
+      thirdPlaceCell.match = match;
+      continue;
+    }
+
     if (!round || !isBracketRound(round)) continue;
     hasAnyMatch = true;
 
@@ -138,7 +155,7 @@ export function buildKnockoutBracket(matches: Match[]): KnockoutBracketData {
     else sideData.semiFinal = { slot: 0, match };
   }
 
-  return { left, right, final: finalCell, hasAnyMatch };
+  return { left, right, final: finalCell, thirdPlace: thirdPlaceCell, hasAnyMatch };
 }
 
 /** Bu bileşenin kapsamadığı diğer eleme maçları (Son 32, Üçüncülük). */
@@ -146,6 +163,57 @@ export function otherKnockoutMatches(matches: Match[]): Match[] {
   return matches.filter(
     (m) => m.stage === "knockout" && !!m.knockout_round && !(BRACKET_ROUNDS as readonly string[]).includes(m.knockout_round)
   );
+}
+
+// ---------------------------------------------------------------------------
+// Sıralı (1-16) global maç numarası ve yer tutucu metinler
+// ---------------------------------------------------------------------------
+
+const ROUND_GLOBAL_OFFSET: Partial<Record<KnockoutRound, number>> = {
+  round_of_16: 0,
+  quarter_final: 8,
+  semi_final: 12,
+};
+
+/**
+ * Sıralı (1-16) global maç numarası: kartlarda ve mobil ipuçlarında
+ * gösterilen "N. Maç" etiketi budur. `bracket_position` alanı her turda
+ * sıfırlanır (1-8 / 1-4 / 1-2 / 1); bu fonksiyon turlar arası TEK artan
+ * numaralandırmaya çevirir ve resmi maç programındaki numaralarla birebir
+ * örtüşür (Son 16: 1-8, Çeyrek Final: 9-12, Yarı Final: 13-14, Üçüncülük:
+ * 15, Final: 16).
+ */
+export function globalMatchNumber(round: KnockoutRound, bracketPosition: number): number {
+  if (round === "final") return 16;
+  if (round === "third_place") return 15;
+  return (ROUND_GLOBAL_OFFSET[round] ?? 0) + bracketPosition;
+}
+
+type FeederRound = "quarter_final" | "semi_final" | "final" | "third_place";
+
+const FEEDER_ROUND: Record<FeederRound, BracketRound> = {
+  quarter_final: "round_of_16",
+  semi_final: "quarter_final",
+  final: "semi_final",
+  third_place: "semi_final",
+};
+
+/**
+ * Takım henüz belli değilken kart üzerinde gösterilecek yer tutucu metin
+ * (ör. "Kazanan 3. Maç", "13. Maç Galibi", "13. Maç Mağlubu"). Sabit
+ * takım adı YAZMAZ; hangi maçın kazananının/kaybedeninin bekleneceğini
+ * tur yapısından türetir — bu yüzden farklı turnuva boyutlarında da doğru
+ * çalışır. Son 16'nın beslediği bir üst tur yoktur (takımlar ağaç
+ * kurulurken doğrudan atanır), bu yüzden bu fonksiyon round_of_16 için
+ * çağrılmaz.
+ */
+export function feederPlaceholders(round: FeederRound, localPosition: number): { home: string; away: string } {
+  const feederRound = FEEDER_ROUND[round];
+  const homeGlobal = globalMatchNumber(feederRound, localPosition * 2 - 1);
+  const awayGlobal = globalMatchNumber(feederRound, localPosition * 2);
+  if (round === "final") return { home: `${homeGlobal}. Maç Galibi`, away: `${awayGlobal}. Maç Galibi` };
+  if (round === "third_place") return { home: `${homeGlobal}. Maç Mağlubu`, away: `${awayGlobal}. Maç Mağlubu` };
+  return { home: `Kazanan ${homeGlobal}. Maç`, away: `Kazanan ${awayGlobal}. Maç` };
 }
 
 // ---------------------------------------------------------------------------
@@ -207,14 +275,22 @@ const LIVE_BADGE_CLASS = "border-red-600 bg-red-600 text-white";
 
 /**
  * Maç durumunu bracket kartı için tek noktadan normalize eder.
- * Etiket/renk kaynağı lib/labels.ts'teki MATCH_STATUS_* haritalarıdır;
- * burada yalnızca LIVE_STATUSES için kırmızı "LIVE" rozetine çevrilir.
+ * Etiket/renk kaynağı lib/labels.ts'teki MATCH_STATUS_* haritalarıdır.
+ * Canlılık yalnızca `status` alanına değil `isMatchLiveNow`e (lib/live.ts)
+ * bakar: skor görevlisi durumu güncellemeyi unutsa bile maç saati Europe/
+ * Istanbul'a göre gelmişse kart otomatik CANLI görünür (veritabanına
+ * yazılmaz, yalnızca arayüz gösterimidir — bkz. KnockoutBracket'taki
+ * periyodik yeniden render tetikleyicisi).
  */
-export function bracketStatusMeta(match: Pick<Match, "status">): BracketStatusMeta {
-  const isLive = LIVE_STATUSES.includes(match.status);
+export function bracketStatusMeta(
+  match: Pick<Match, "status" | "match_date" | "start_time">
+): BracketStatusMeta {
+  const isLive = isMatchLiveNow(match);
   if (isLive) {
-    const nuance = match.status === "in_progress" ? null : MATCH_STATUS_LABELS[match.status];
-    return { isLive: true, badgeLabel: "LIVE", badgeClassName: LIVE_BADGE_CLASS, liveNuance: nuance };
+    const nuance = LIVE_STATUSES.includes(match.status) && match.status !== "in_progress"
+      ? MATCH_STATUS_LABELS[match.status]
+      : null;
+    return { isLive: true, badgeLabel: "CANLI", badgeClassName: LIVE_BADGE_CLASS, liveNuance: nuance };
   }
   return {
     isLive: false,
