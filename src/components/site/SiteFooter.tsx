@@ -1,6 +1,11 @@
 import Link from "next/link";
 import type { FooterSettings, Tournament } from "@/lib/types";
 
+/** Siteyi geliştiren kişinin hesabı; turnuvanın/belediyenin resmi hesabı
+ * DEĞİLDİR, bu yüzden footer'da her zaman "Geliştirici" etiketiyle gösterilir
+ * (panelden yönetilen `footer.instagram` turnuvanın kendi hesabı içindir). */
+const DEVELOPER_INSTAGRAM = "https://www.instagram.com/efebaloglu.co/";
+
 const QUICK_LINKS = [
   { href: "/fikstur", label: "Fikstür" },
   { href: "/puan-durumu", label: "Puan Durumu" },
@@ -78,7 +83,17 @@ export function SiteFooter({
                 </a>
               </li>
             ) : null}
-            {!footer.instagram && !footer.facebook && <li>-</li>}
+            <li>
+              Geliştirici:{" "}
+              <a
+                href={DEVELOPER_INSTAGRAM}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium hover:text-ink hover:underline"
+              >
+                @efebaloglu.co
+              </a>
+            </li>
           </ul>
         </div>
       </div>
@@ -96,7 +111,14 @@ export function SiteFooter({
             <span>
               {/* İmza sabittir; panelden veya ayarlardan değiştirilemez */}
               Tasarım ve geliştirme:{" "}
-              <span className="font-semibold text-ink">Efe Baloğlu</span>
+              <a
+                href={DEVELOPER_INSTAGRAM}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-ink hover:underline"
+              >
+                Efe Baloğlu
+              </a>
             </span>
           </p>
         </div>
